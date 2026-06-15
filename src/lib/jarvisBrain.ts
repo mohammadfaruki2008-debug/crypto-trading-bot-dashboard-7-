@@ -1,5 +1,5 @@
 // ============================================================================
-// JARVIS BRAIN – final working version with Worker fallback & localRespond
+// JARVIS BRAIN – complete working version with all functions
 // ============================================================================
 
 /* ----------------------------- Types ----------------------------------- */
@@ -54,7 +54,7 @@ function loadSession() { try { return JSON.parse(localStorage.getItem(SESSION_ST
 function saveSession(h: { role: string; content: string }[]) { localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(h.slice(-30))); }
 let sessionHistory: { role: string; content: string }[] = loadSession();
 
-// ---- RAG Knowledge (unchanged) ----
+// ---- RAG Knowledge ----
 interface KnowledgeEntry { id: string; ts: string; query: string; action: string; reasoning: string; text: string; vec: number[] }
 const KB_KEY = 'jarvis_knowledge_v1';
 function loadKB(): KnowledgeEntry[] { try { return JSON.parse(localStorage.getItem(KB_KEY) || '[]'); } catch { return []; } }
@@ -89,7 +89,6 @@ async function callAI(messages: { role: string; content: string }[]): Promise<st
     throw new Error(`Worker error ${res.status}: ${errText}`);
   }
   const data = await res.json();
-  // data.text or data.error
   if (data.error) throw new Error(`Worker backend error: ${data.error}`);
   return data.text || '';
 }
@@ -128,21 +127,85 @@ function buildTools(ctx: JarvisContext): Record<string, (p: Record<string, unkno
   };
 }
 
-// ---- Proactive monitor (same as before) ----
+// ---- Proactive monitor (full implementation) ----
 let monitorTimer: any = null; const lastSignalAt: Record<string, number> = {};
-function startProactiveMonitor(ctx: JarvisContext, symbols: string[]) { /* ... same ... */ }
+function startProactiveMonitor(ctx: JarvisContext, symbols: string[]) {
+  stopProactiveMonitor();
+  const tick = async () => {
+    for (const sym of symbols) {
+      try {
+        const data: any = await ctx.getIndicators(sym, '1h');
+        if (data?.comboBuy || data?.comboSell) {
+          const now = Date.now();
+          if (now - (lastSignalAt[sym] || 0) < 2 * 60 * 60 * 1000) continue;
+          lastSignalAt[sym] = now;
+          const dir = data.comboBuy ? 'buy' : 'sell';
+          ctx.placeTrade({ symbol: sym, side: dir, sl: data.sl, tp1: data.tp1, tp2: data.tp2, tp3: data.tp3 });
+          ctx.onLog?.(`🛰️ JARVIS proactive ${dir.toUpperCase()} on ${sym}`);
+        }
+      } catch {}
+    }
+  };
+  tick();
+  monitorTimer = setInterval(tick, 15 * 60 * 1000);
+}
 function stopProactiveMonitor() { if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; } }
 
-// ---- JSON parsing ----
-function parseActions(text: string): Record<string, unknown>[] { /* ... same ... */ }
-function stripActions(text: string): string { /* ... same ... */ }
+// ---- JSON parsing (FULL) ----
+function parseActions(text: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      if (Array.isArray(parsed)) parsed.forEach((x: any) => { if (x?.action) out.push(x); });
+      else if (parsed?.action) out.push(parsed);
+    } catch {}
+  }
+  const bareRe = /\{[^{}]*"action"\s*:\s*"[^"]+"[^{}]*\}/g;
+  while ((m = bareRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[0]);
+      if (parsed?.action && !out.some(o => JSON.stringify(o) === JSON.stringify(parsed))) out.push(parsed);
+    } catch {}
+  }
+  return out;
+}
+
+function stripActions(text: string): string {
+  let cleaned = text
+    .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/gi, '')
+    .replace(/```(?:json)?\s*\[[\s\S]*?\]\s*```/gi, '')
+    .replace(/```(?:json)?[\s\S]*?```/gi, (m) => (/"action"\s*:/.test(m) ? '' : m))
+    .replace(/\{[^{}]*"action"\s*:\s*"[^"]+"[^{}]*\}/g, '')
+    .replace(/^\s*\{[^{}]*\}\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (/^\s*[\{\[]/.test(cleaned)) {
+    try {
+      const obj = JSON.parse(cleaned);
+      if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+        const sym = obj.symbol as string;
+        if (obj.price != null) {
+          const price = Number(obj.price).toLocaleString();
+          return sym ? `**${sym}** is currently trading at **${price} USDT**, sir.` : `Current price: **${price} USDT**, sir.`;
+        }
+        const parts = Object.entries(obj).map(([k, v]) => `• **${k}**: ${typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v)}`);
+        cleaned = parts.join('\n');
+      }
+    } catch {}
+  }
+  return cleaned || 'Done, sir.';
+}
 
 // ---- System prompt ----
 function systemPrompt(): string {
   return `You are JARVIS, the elite AI assistant of the Quantum Mind dashboard. Be proactive, concise, and conversational. Understand natural language and use tools when needed.`;
 }
 
-// ---- Local fallback (simple but functional) ----
+// ---- Local fallback ----
 async function localRespond(message: string, ctx: JarvisContext): Promise<JarvisReply> {
   const actions: ExecutedAction[] = [];
   const tools = buildTools(ctx);
