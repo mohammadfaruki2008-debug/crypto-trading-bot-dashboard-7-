@@ -1,0 +1,52 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quad_bot
+    env_file: .env
+    environment:
+      ML_SERVICE_URL: http://ml:8000
+      DATABASE_URL: postgres://quad:quad@postgres:5432/quad
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ml
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  ml:
+    build:
+      context: ./ml_service
+      dockerfile: Dockerfile
+    container_name: quad_ml
+    volumes:
+      - ./ml_service/data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: quad_pg
+    environment:
+      POSTGRES_USER: quad
+      POSTGRES_PASSWORD: quad
+      POSTGRES_DB: quad
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: quad_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
