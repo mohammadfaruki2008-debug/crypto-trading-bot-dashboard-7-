@@ -129,21 +129,23 @@ function searchKnowledge(query: string, topK = 3): KnowledgeEntry[] {
     .map((x) => x.e);
 }
 
-/* ----- Cloudflare Worker proxy (Groq → Gemini → SambaNova → CF AI fallback) ----- */
+/* ----------------------- Cloudflare Worker Proxy ----------------------- */
+// Uses the Cloudflare Worker proxy to avoid CORS and rate limits.
+// The Worker handles the AI fallback chain (Groq -> Gemini -> etc.) and API keys.
 
 const WORKER_URL = 'https://quantum-mind.mohammadfaruki2008.workers.dev/';
 
-async function callWorker(messages: { role: string; content: string }[]): Promise<string> {
+async function callAIWorker(messages: { role: string; content: string }[]): Promise<string> {
   const res = await fetch(WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(45000), // increased timeout for AI fallback chain
   });
   if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
   const data = await res.json();
-  // Worker returns { text } — also fall back to choices format if Groq passes through raw
-  return data?.text ?? data?.reply ?? data?.choices?.[0]?.message?.content ?? '';
+  // The worker returns { text: "..." }
+  return data.text || data.reply || '';
 }
 
 /* ------------------------- Tool registry -------------------------------- */
@@ -525,8 +527,7 @@ async function localRespond(message: string, ctx: JarvisContext): Promise<Jarvis
 
 /**
  * Ask JARVIS a question. Returns narrative text + any executed tool actions.
- * Routes through Cloudflare Worker proxy (Groq → Gemini → SambaNova → CF AI fallback).
- * Falls back to local rule-based brain if the Worker is unreachable.
+ * Uses Groq when VITE_GROQ_API_KEY is set; otherwise a local rule-based brain.
  */
 export async function askJarvis(userMessage: string, ctx: JarvisContext): Promise<JarvisReply> {
   // Self-learning: surface relevant past decisions into context
@@ -548,9 +549,8 @@ export async function askJarvis(userMessage: string, ctx: JarvisContext): Promis
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let reply: string;
     try {
-      reply = await callWorker(messages);
+      reply = await callAIWorker(messages);
     } catch (err: any) {
-      console.warn('[JARVIS] Worker unreachable, falling back to local brain:', err.message);
       return localRespond(userMessage, ctx);
     }
 

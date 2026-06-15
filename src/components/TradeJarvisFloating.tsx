@@ -606,7 +606,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
 
             <div className="text-[9px] text-slate-600 font-mono text-center mt-1.5 flex items-center justify-center gap-1.5">
               <Zap className="w-2.5 h-2.5" />
-              {serverUrl ? 'Connected to Express server' : 'Cloudflare Worker · Multi-AI'}
+              {serverUrl ? 'Connected to Express server' : 'Cloudflare AI Proxy · Multi-Model'}
               {voiceOn && <span className="text-emerald-400">• Voice active</span>}
             </div>
           </div>
