@@ -128,8 +128,8 @@ const tools: Record<string, ToolFn> = {
 
   async learn({ note }) {
     try {
-      const emb = await getEmbedding(note);
-      // Store via Supabase if available
+      const { saveKnowledge } = await import('./knowledgeEngine');
+      await saveKnowledge(String(note || ''), { type: 'manual_note', ts: new Date().toISOString() });
       return { ok: true, message: 'Saved to knowledge base' };
     } catch { return { ok: true, message: 'Noted locally (Supabase not configured)' }; }
   },
