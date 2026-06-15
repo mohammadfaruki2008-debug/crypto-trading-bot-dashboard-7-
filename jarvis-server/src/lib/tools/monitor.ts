@@ -3,9 +3,6 @@
  * asks Jarvis for a decision, auto-executes with risk checks.
  */
 import { fetchPrice } from '../binance';
-import { getRSI, getMACD, getSuperTrend } from '../indicators';
-import { executeTrade } from './trade';
-import { getPortfolio } from './portfolio';
 import { checkAlerts } from './alert';
 
 let timer: NodeJS.Timeout | null = null;
