@@ -1,23 +1,19 @@
-# Render deployment config — Quantum Mind as Static Site
-# 
-# Usage on Render:
-# 1. New → Static Site
-# 2. Connect your GitHub repo
-# 3. Settings:
-#    - Build Command: npm install && npm run build
-#    - Publish Directory: dist
-#    - Node Version: set NODE_VERSION env var = 22
+###############################################################################
+# Quantum Mind — Render Blueprint (Frontend Static + Backend Web Service)
+# This single file deploys BOTH services together.
 #
-# IMPORTANT — Root Directory: LEAVE EMPTY (use repo root)
-# The build expects package.json at the repository root.
-#
-# If you want a server-side deploy (Express + JARVIS backend),
-# use the backend project in this repo (currently NOT deployed here).
+# Usage:
+#   1. Push this repo to GitHub
+#   2. Render → New → Blueprint → select repo → Apply
+#   3. Set required env vars (see backend/.env.example)
+###############################################################################
 
 services:
+  # ═══════════════ FRONTEND (Static Site, free) ═══════════════
   - type: web
     name: quantum-mind-frontend
     runtime: static
+    rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     envVars:
@@ -25,6 +21,12 @@ services:
         value: "22"
       - key: NPM_CONFIG_PRODUCTION
         value: "false"
+      # Backend URL — frontend reads this via VITE_BACKEND_URL
+      # After backend deploys, paste its URL here:
+      - key: VITE_BACKEND_URL
+        sync: false
+      - key: VITE_ADMIN_TOKEN
+        sync: false
     routes:
       - type: rewrite
         source: /*
@@ -33,6 +35,62 @@ services:
       - path: /*
         name: X-Frame-Options
         value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+
+  # ═══════════════ BACKEND (Web Service, MUST be Starter $7/mo for 24/7) ═══════════════
+  - type: web
+    name: quantum-mind-backend
+    runtime: node
+    rootDir: backend
+    plan: starter # ⚠️ Starter ($7/mo) — free tier sleeps after 15min idle, kills the monitor
+    region: singapore # close to Binance Tokyo servers
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      # Binance (REQUIRED for trading)
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_SECRET_KEY
+        sync: false
+      - key: BINANCE_TESTNET
+        value: "true" # start safe; flip to false for mainnet
+      # AI brain proxy
+      - key: JARVIS_WORKER_URL
+        value: https://quantum-mind.mohammadfaruki2008.workers.dev/
+      # Auth — frontend sends this in X-Admin-Token header
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      # CRITICAL — used to encrypt Binance keys saved to DB.
+      # Render auto-generates; DO NOT change after first deploy or stored keys won't decrypt.
+      - key: SECRET_ENCRYPTION_KEY
+        generateValue: true
+      # Optional: Supabase for self-learning memory
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # CORS allowlist — set to frontend URL after first deploy
+      - key: FRONTEND_URL
+        sync: false
+      # 24/7 monitor config
+      - key: MONITOR_SYMBOLS
+        value: BTCUSDT,ETHUSDT,SOLUSDT
+      - key: MONITOR_INTERVAL_SEC
+        value: "60"
+      - key: MONITOR_AUTOSTART
+        value: "true"

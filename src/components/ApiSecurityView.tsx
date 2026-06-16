@@ -17,7 +17,7 @@ import {
   TestTube2
 } from 'lucide-react';
 import { BinanceSettings, AlertSettings } from '../types';
-import { validateApiKeys } from '../lib/binanceApi';
+import { backendApi, backendConfigured } from '../lib/backendApi';
 import { testWebhookServer } from '../lib/webhookReceiver';
 import { testImapConnection } from '../lib/imapClient';
 
@@ -80,6 +80,20 @@ export const ApiSecurityView: React.FC<ApiSecurityViewProps> = ({
   const [isEncrypting, setIsEncrypting] = useState(false);
   const [keySaveSuccess, setKeySaveSuccess] = useState(false);
   const [keyValidation, setKeyValidation] = useState<{ status: 'idle' | 'testing' | 'ok' | 'error'; message?: string }>({ status: 'idle' });
+  const [backendStatus, setBackendStatus] = useState<{ configured: boolean; testnet: boolean; source: string; preview: string; updatedAt?: string } | null>(null);
+
+  // Fetch backend settings status on mount and after save
+  React.useEffect(() => {
+    if (!backendConfigured) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await backendApi.settingsStatus();
+        if (!cancelled) setBackendStatus(s);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [keySaveSuccess]);
 
   // Webhook form state
   const [webhookSecret, setWebhookSecret] = useState(alertSettings.webhookSecret);
@@ -98,29 +112,99 @@ export const ApiSecurityView: React.FC<ApiSecurityViewProps> = ({
 
   const handleTestBinanceKeys = async () => {
     setKeyValidation({ status: 'testing' });
-    const activeKey = isTestnetTab ? testnetApiKey : apiKey;
-    const activeSecret = isTestnetTab ? testnetApiSecret : apiSecret;
-    const result = await validateApiKeys({ apiKey: activeKey, apiSecret: activeSecret, testnet: !!isTestnetTab });
-    if (result.valid && result.canTrade) {
-      setKeyValidation({ status: 'ok', message: `✅ Valid! Account: ${result.accountType}, Spot Trading: allowed` });
-    } else {
-      setKeyValidation({ status: 'error', message: result.error || 'Cannot trade on this key' });
+    if (!backendConfigured) {
+      setKeyValidation({ status: 'error', message: 'Backend not configured. Set VITE_BACKEND_URL + VITE_ADMIN_TOKEN env vars.' });
+      return;
+    }
+    try {
+      // Tests the keys CURRENTLY SAVED in the backend DB (encrypted)
+      const result: any = await backendApi.testSettings();
+      if (!result.configured) {
+        setKeyValidation({ status: 'error', message: 'No keys saved yet. Enter and click Save first.' });
+        return;
+      }
+      if (result.valid && result.canTrade) {
+        setKeyValidation({
+          status: 'ok',
+          message: `✅ Stored keys VALID! ${result.testnet ? '🧪 TESTNET' : '💰 MAINNET'} — Spot Trading allowed (key ${result.preview})`,
+        });
+      } else {
+        setKeyValidation({ status: 'error', message: result.error || 'Stored keys rejected by Binance' });
+      }
+    } catch (err: any) {
+      setKeyValidation({ status: 'error', message: `Backend error: ${err.message}` });
     }
   };
 
-  const handleSaveBinance = (e: React.FormEvent) => {
+  const handleSaveBinance = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsEncrypting(true);
-    setTimeout(() => {
+    setKeyValidation({ status: 'idle' });
+
+    const activeKey = isTestnetTab ? testnetApiKey : apiKey;
+    const activeSecret = isTestnetTab ? testnetApiSecret : apiSecret;
+
+    if (!activeKey || !activeSecret) {
       setIsEncrypting(false);
-      if (isTestnetTab) {
-        onSaveBinanceSettings({ ...binanceSettings, testnetApiKey, testnetApiSecret, isEncrypted: true });
+      setKeyValidation({ status: 'error', message: 'Both API key and secret are required' });
+      return;
+    }
+
+    // ─── SECURE PERSISTENT SAVE — POST to backend, encrypted at rest ───
+    if (!backendConfigured) {
+      setIsEncrypting(false);
+      setKeyValidation({
+        status: 'error',
+        message: 'Backend not configured. Set VITE_BACKEND_URL + VITE_ADMIN_TOKEN env vars on the frontend.',
+      });
+      return;
+    }
+
+    try {
+      const result: any = await backendApi.saveSettings({
+        apiKey: activeKey,
+        apiSecret: activeSecret,
+        testnet: !!isTestnetTab,
+      });
+      setIsEncrypting(false);
+
+      if (result.ok) {
+        setKeySaveSuccess(true);
+        setKeyValidation({
+          status: 'ok',
+          message: `🔒 Encrypted and saved to ${isTestnetTab ? 'TESTNET' : 'MAINNET'} secure storage. Backend monitor will use these keys.`,
+        });
+
+        // Locally cache only NON-SENSITIVE preview (e.g. update display state)
+        // We do NOT want to keep plain secrets in localStorage.
+        if (isTestnetTab) {
+          onSaveBinanceSettings({
+            ...binanceSettings,
+            testnetApiKey: activeKey.slice(0, 4) + '••••••••' + activeKey.slice(-4),
+            testnetApiSecret: '••••••••••••••••••••••',
+            isEncrypted: true,
+          });
+        } else {
+          onSaveBinanceSettings({
+            ...binanceSettings,
+            apiKey: activeKey.slice(0, 4) + '••••••••' + activeKey.slice(-4),
+            apiSecret: '••••••••••••••••••••••',
+            isEncrypted: true,
+          });
+        }
+
+        // Clear plain values from React state for safety
+        if (isTestnetTab) { setTestnetApiKey(''); setTestnetApiSecret(''); }
+        else { setApiKey(''); setApiSecret(''); }
+
+        setTimeout(() => setKeySaveSuccess(false), 4000);
       } else {
-        onSaveBinanceSettings({ ...binanceSettings, apiKey, apiSecret, isEncrypted: true });
+        setKeyValidation({ status: 'error', message: result.message || 'Save failed' });
       }
-      setKeySaveSuccess(true);
-      setTimeout(() => setKeySaveSuccess(false), 3000);
-    }, 600);
+    } catch (err: any) {
+      setIsEncrypting(false);
+      setKeyValidation({ status: 'error', message: `Backend error: ${err.message}` });
+    }
   };
 
   const handleTestWebhookServer = async () => {
@@ -173,17 +257,37 @@ export const ApiSecurityView: React.FC<ApiSecurityViewProps> = ({
         </button>
       </div>
 
-      {/* Self-contained notice */}
-      <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-3xl p-5 flex items-start gap-3">
-        <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-        <div className="text-xs text-emerald-100/90 leading-relaxed space-y-1.5 flex-1">
-          <p>
-            <strong className="text-emerald-300">Built-in QUAD engine self-contained:</strong> Binance API Keys দিলেই বট চলে — TradingView লাগে না।
-            নিচের Webhook ও Gmail IMAP পরে TV Pro+ নিলে কাজে আসবে।
-          </p>
-          <p className="text-slate-300">
-            <strong>Quick start:</strong> শুধু Binance API Keys সংরক্ষণ করুন → Tradeable Coins add করুন → Bot Settings-এ Auto-Trade চালু করুন।
-          </p>
+      {/* Backend connection + saved-keys status */}
+      <div className={`rounded-3xl p-5 flex items-start gap-3 border ${
+        !backendConfigured
+          ? 'bg-rose-950/30 border-rose-500/40'
+          : backendStatus?.configured
+            ? 'bg-emerald-950/20 border-emerald-500/30'
+            : 'bg-amber-950/20 border-amber-500/30'
+      }`}>
+        <ShieldCheck className={`w-5 h-5 shrink-0 mt-0.5 ${
+          !backendConfigured ? 'text-rose-400'
+            : backendStatus?.configured ? 'text-emerald-400' : 'text-amber-400'
+        }`} />
+        <div className="text-xs leading-relaxed space-y-1.5 flex-1">
+          {!backendConfigured ? (
+            <>
+              <p className="text-rose-200"><strong>⚠️ Backend not configured.</strong> Set <code className="bg-slate-900 px-1 rounded">VITE_BACKEND_URL</code> and <code className="bg-slate-900 px-1 rounded">VITE_ADMIN_TOKEN</code> in your frontend env vars, then redeploy. Without backend, keys cannot be persisted.</p>
+            </>
+          ) : backendStatus?.configured ? (
+            <>
+              <p className="text-emerald-200">
+                <strong className="text-emerald-300">🔒 Saved &amp; encrypted</strong> on backend ({backendStatus.source}). Key preview: <code className="bg-slate-900 px-1 rounded text-emerald-300">{backendStatus.preview}</code> · Mode: <strong>{backendStatus.testnet ? '🧪 TESTNET' : '💰 MAINNET'}</strong>
+                {backendStatus.updatedAt && <> · Updated {new Date(backendStatus.updatedAt).toLocaleString()}</>}
+              </p>
+              <p className="text-slate-300">The 24/7 monitor on the backend is using these keys for all signed Binance requests.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-amber-200"><strong className="text-amber-300">No keys saved yet.</strong> Enter your Binance API key + secret below and click <strong>Save</strong>. They'll be AES-256-GCM encrypted before storage.</p>
+              <p className="text-slate-300">Start with <strong>Testnet</strong> mode (free virtual funds, no risk).</p>
+            </>
+          )}
         </div>
       </div>
 

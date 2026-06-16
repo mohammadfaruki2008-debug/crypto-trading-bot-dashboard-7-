@@ -1,5 +1,5 @@
 /**
- * Supabase client — graceful fallback when not configured.
+ * Supabase client — graceful no-op stub when not configured.
  */
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
@@ -11,19 +11,16 @@ if (config.supabase.url && config.supabase.anonKey) {
     _client = createClient(config.supabase.url, config.supabase.anonKey);
     console.log('[SUPABASE] ✅ Connected');
   } catch (err: any) {
-    console.warn('[SUPABASE] Init failed:', err.message);
+    console.warn('[SUPABASE] init failed:', err.message);
   }
 } else {
-  console.warn('[SUPABASE] ⚪ Not configured (RAG memory disabled)');
+  console.log('[SUPABASE] ⚪ Not configured (using local JSON fallback)');
 }
 
 const stub: any = {
   from: () => ({
     insert: async () => ({ data: null, error: null }),
     select: () => ({ data: [], error: null, eq: () => stub.from(), order: () => stub.from(), limit: () => ({ data: [], error: null }) }),
-    eq: () => stub.from(),
-    order: () => stub.from(),
-    limit: () => ({ data: [], error: null }),
   }),
   rpc: async () => ({ data: [], error: null }),
 };

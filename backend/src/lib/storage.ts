@@ -1,6 +1,6 @@
 /**
- * Lightweight JSON file storage for trades, alerts, logs, knowledge.
- * Used when Supabase is not configured (zero-config mode).
+ * Lightweight JSON file storage in data/ folder.
+ * Used for trades, alerts, knowledge, risk state when Supabase isn't configured.
  */
 import fs from 'fs';
 import path from 'path';
@@ -28,7 +28,7 @@ export function writeJson(filename: string, data: any): void {
   try {
     fs.writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err: any) {
-    console.warn(`[STORAGE] writeJson failed for ${filename}:`, err.message);
+    console.warn(`[STORAGE] write failed (${filename}):`, err.message);
   }
 }
 

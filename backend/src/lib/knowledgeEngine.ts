@@ -1,21 +1,12 @@
 /**
- * Knowledge base — RAG memory for JARVIS self-learning.
- * Uses Supabase pgvector if available, otherwise local JSON fallback.
+ * Knowledge base — Supabase pgvector if available, local JSON otherwise.
  */
 import { supabase, supabaseEnabled } from './supabaseClient';
 import { readJson, writeJson } from './storage';
 
-interface KnowledgeEntry {
-  id: string;
-  ts: string;
-  content: string;
-  embedding: number[];
-  metadata: Record<string, any>;
-}
+interface Entry { id: string; ts: string; content: string; embedding: number[]; metadata: Record<string, any>; }
+const FILE = 'knowledge.json';
 
-const LOCAL_FILE = 'knowledge.json';
-
-/** Hash-based fallback embedding (384-dim, like MiniLM). */
 export function getEmbedding(text: string): number[] {
   const dim = 384;
   const v = new Array(dim).fill(0);
@@ -35,59 +26,37 @@ function cosine(a: number[], b: number[]): number {
   return s;
 }
 
-export async function saveKnowledge(content: string, metadata: Record<string, any> = {}): Promise<boolean> {
-  const entry: KnowledgeEntry = {
+export async function saveKnowledge(content: string, metadata: Record<string, any> = {}): Promise<void> {
+  const entry: Entry = {
     id: `k_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    ts: new Date().toISOString(),
-    content,
-    embedding: getEmbedding(content),
-    metadata,
+    ts: new Date().toISOString(), content,
+    embedding: getEmbedding(content), metadata,
   };
-
   if (supabaseEnabled) {
     try {
-      const { error } = await supabase.from('knowledge_base').insert({
-        content: entry.content,
-        embedding: entry.embedding,
-        metadata: entry.metadata,
-      });
-      if (error) {
-        console.warn('[KNOWLEDGE] Supabase save failed, using local:', error.message);
-      } else {
-        return true;
-      }
-    } catch (err: any) {
-      console.warn('[KNOWLEDGE] Supabase error:', err.message);
-    }
+      const { error } = await supabase.from('knowledge_base').insert({ content, embedding: entry.embedding, metadata });
+      if (!error) return;
+    } catch { /* fall through */ }
   }
-
-  // Local fallback
-  const list = readJson<KnowledgeEntry[]>(LOCAL_FILE, []);
+  const list = readJson<Entry[]>(FILE, []);
   list.push(entry);
   while (list.length > 1000) list.shift();
-  writeJson(LOCAL_FILE, list);
-  return true;
+  writeJson(FILE, list);
 }
 
-export async function searchKnowledge(query: string, topK = 5): Promise<{ content: string; score: number; metadata: any }[]> {
-  const queryEmb = getEmbedding(query);
-
+export async function searchKnowledge(query: string, topK = 5): Promise<{ content: string; score: number }[]> {
+  const qv = getEmbedding(query);
   if (supabaseEnabled) {
     try {
-      const { data, error } = await supabase.rpc('match_knowledge', {
-        query_embedding: queryEmb,
-        match_count: topK,
-      });
+      const { data, error } = await supabase.rpc('match_knowledge', { query_embedding: qv, match_count: topK });
       if (!error && Array.isArray(data) && data.length > 0) {
-        return data.map((d: any) => ({ content: d.content, score: d.similarity || 1, metadata: d.metadata || {} }));
+        return data.map((d: any) => ({ content: d.content, score: d.similarity || 1 }));
       }
     } catch { /* fall through */ }
   }
-
-  // Local cosine search
-  const list = readJson<KnowledgeEntry[]>(LOCAL_FILE, []);
+  const list = readJson<Entry[]>(FILE, []);
   return list
-    .map(e => ({ content: e.content, score: cosine(queryEmb, e.embedding), metadata: e.metadata }))
+    .map(e => ({ content: e.content, score: cosine(qv, e.embedding) }))
     .filter(x => x.score > 0.05)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
