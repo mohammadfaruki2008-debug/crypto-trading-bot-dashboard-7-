@@ -21,7 +21,9 @@ export async function askJarvis(userMessage: string): Promise<string> {
     });
 
     if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
-    const data = await res.json();
+    
+    // 🛠️ FIX: Cast response as 'any' to resolve TS18046 'unknown' type error
+    const data = await res.json() as any; 
     return data.text || "My apologies, sir. I didn't catch that.";
   } catch (error: any) {
     console.error('[JARVIS Brain] Error:', error.message);

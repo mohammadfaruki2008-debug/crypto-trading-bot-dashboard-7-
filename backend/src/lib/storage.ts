@@ -40,9 +40,6 @@ function writeData(data: any): void {
   }
 }
 
-/**
- * Saves encrypted credentials to the local data.json file.
- */
 export function saveEncryptedCredentials(encryptedApiKey: string, encryptedSecretKey: string, testnet: boolean): void {
   const data = readData();
   data.binance = {
@@ -55,23 +52,16 @@ export function saveEncryptedCredentials(encryptedApiKey: string, encryptedSecre
   console.log('[Storage] ✅ Encrypted credentials saved successfully.');
 }
 
-/**
- * Retrieves and decrypts credentials for the trading engine.
- */
 export function getDecryptedCredentials(): DecryptedSettings | null {
   const data = readData();
   if (!data.binance) return null;
   
   try {
-    // Dynamic import to break circular dependency with crypto helper
     const { decrypt } = require('./crypto');
     const apiKey = decrypt(data.binance.encryptedApiKey);
     const secretKey = decrypt(data.binance.encryptedSecretKey);
     
-    if (!apiKey || !secretKey) {
-      console.error('[Storage] Failed to decrypt credentials or they are missing.');
-      return null;
-    }
+    if (!apiKey || !secretKey) return null;
     
     return {
       apiKey,
@@ -79,31 +69,29 @@ export function getDecryptedCredentials(): DecryptedSettings | null {
       testnet: data.binance.testnet
     };
   } catch (err) {
-    console.error('[Storage] Decryption runtime error:', err);
     return null;
   }
 }
 
-// 🔄 Alias function to avoid import errors across files
 export function getDecryptedCreds() {
   return getDecryptedCredentials();
 }
 
 /**
- * 🟢 Generic JSON Helpers required by knowledgeEngine, alerts, and trades
+ * 🟢 Synchronous JSON Engines to perfectly satisfy trading logic rules
  */
-export async function readJson(filename: string): Promise<any[]> {
+export function readJson<T = any>(filename: string): T {
   try {
     const targetPath = path.join(DATA_DIR, filename);
-    if (!fs.existsSync(targetPath)) return [];
+    if (!fs.existsSync(targetPath)) return [] as any;
     const raw = fs.readFileSync(targetPath, 'utf8');
     return JSON.parse(raw || '[]');
   } catch {
-    return [];
+    return [] as any;
   }
 }
 
-export async function writeJson(filename: string, data: any): Promise<void> {
+export function writeJson(filename: string, data: any): void {
   try {
     const targetPath = path.join(DATA_DIR, filename);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -111,10 +99,10 @@ export async function writeJson(filename: string, data: any): Promise<void> {
   } catch (e) {}
 }
 
-export async function appendJson(filename: string, item: any): Promise<void> {
+export function appendJson(filename: string, item: any): void {
   try {
-    const data = await readJson(filename);
+    const data = readJson<any[]>(filename);
     data.push({ ...item, id: item.id || `id_${Math.random().toString(36).substring(2, 9)}`, timestamp: Date.now() });
-    await writeJson(filename, data);
+    writeJson(filename, data);
   } catch (e) {}
 }
