@@ -375,5 +375,5 @@ function stopProactiveMonitor(): void {
 function parseActions(text: string): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   
-  // 🛠️ Secure regex constructors to prevent system markdown rendering corruption
-  const fenceRe = new RegExp('
+  // 🛰️ Pure regex literals with ES2018 's' flag to easily parse multi-line markdown code blocks safely
+  const fenceRe = /
