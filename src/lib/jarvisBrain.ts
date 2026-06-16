@@ -57,6 +57,23 @@ export interface JarvisContext {
 /* ----------------------------- Config ---------------------------------- */
 
 const WORKER_URL = 'https://quantum-mind.mohammadfaruki2008.workers.dev/';
+
+async function callAI(messages: { role: string; content: string }[]): Promise<string> {
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Worker error ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.text || '';
+}
 const MAX_TOOL_ROUNDS = 6;
 
 /* ---- SESSION MEMORY (module-scoped, survives across calls until page refresh) ---- */
