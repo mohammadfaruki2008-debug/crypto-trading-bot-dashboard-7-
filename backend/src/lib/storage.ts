@@ -1,6 +1,7 @@
 /**
  * Persistent Storage Module
  * Saves and retrieves encrypted API keys and general JSON app logs/data.
+ * Fallback mechanism added to dynamically pull keys from process.env if local JSON is unwritten.
  */
 import fs from 'fs';
 import path from 'path';
@@ -40,6 +41,9 @@ function writeData(data: any): void {
   }
 }
 
+/**
+ * Saves encrypted credentials to the local data.json file.
+ */
 export function saveEncryptedCredentials(encryptedApiKey: string, encryptedSecretKey: string, testnet: boolean): void {
   const data = readData();
   data.binance = {
@@ -52,25 +56,42 @@ export function saveEncryptedCredentials(encryptedApiKey: string, encryptedSecre
   console.log('[Storage] ✅ Encrypted credentials saved successfully.');
 }
 
+/**
+ * Retrieves and decrypts credentials for the trading engine.
+ * Includes automatic .env fallback for stateless Render servers.
+ */
 export function getDecryptedCredentials(): DecryptedSettings | null {
   const data = readData();
-  if (!data.binance) return null;
   
-  try {
-    const { decrypt } = require('./crypto');
-    const apiKey = decrypt(data.binance.encryptedApiKey);
-    const secretKey = decrypt(data.binance.encryptedSecretKey);
-    
-    if (!apiKey || !secretKey) return null;
-    
-    return {
-      apiKey,
-      secretKey,
-      testnet: data.binance.testnet
-    };
-  } catch (err) {
-    return null;
+  // ১. ড্যাশবোর্ডে ফাইল সেভ করা থাকলে প্রথমে ওটা ট্রাই করবে
+  if (data.binance) {
+    try {
+      const { decrypt } = require('./crypto');
+      const apiKey = decrypt(data.binance.encryptedApiKey);
+      const secretKey = decrypt(data.binance.encryptedSecretKey);
+      
+      if (apiKey && secretKey) {
+        return {
+          apiKey,
+          secretKey,
+          testnet: data.binance.testnet
+        };
+      }
+    } catch (err) {
+      console.error('[Storage] Decryption failed, attempting .env fallback...');
+    }
   }
+  
+  // ২. ⚠️ রেন্ডার ব্যাকআপ: data.json খালি থাকলে সরাসরি রেন্ডারের Environment Variables থেকে কী নেবে
+  if (process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET) {
+    return {
+      apiKey: process.env.BINANCE_API_KEY,
+      secretKey: process.env.BINANCE_API_SECRET,
+      testnet: process.env.BINANCE_USE_TESTNET === 'true' || true
+    };
+  }
+  
+  return null;
 }
 
 export function getDecryptedCreds() {
@@ -78,10 +99,9 @@ export function getDecryptedCreds() {
 }
 
 /**
- * 🟢 Synchronous JSON Engines — Rest Parameters (...) added to swallow any extra arguments
+ * 🟢 Synchronous JSON Engines — Handles application data logging and watchlist history
  */
 export function readJson<T = any>(filename: string, ...args: any[]): T {
-  // যদি ২য় আর্গুমেন্ট হিসেবে কোনো fallback/ডিফল্ট ডাটা পাঠানো হয়, তবে সেটি ধরবে, নতুবা খালি অ্যারে []
   const fallback = args[0] !== undefined ? args[0] : ([] as any);
   try {
     const targetPath = path.join(DATA_DIR, filename);
