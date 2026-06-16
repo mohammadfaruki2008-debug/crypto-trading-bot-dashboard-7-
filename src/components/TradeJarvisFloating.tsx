@@ -11,9 +11,9 @@ import { askJarvis, JarvisContext, ExecutedAction } from '../lib/jarvisBrain';
    ═══════════════════════════════════════════════════════════════════ */
 
 interface TradeJarvisFloatingProps {
-  context: JarvisContext;
-  /** Optional: if your Express server is running, set this to e.g. "http://localhost:8080".
-   *  When set, Jarvis calls POST /api/jarvis on the server instead of the local brain. */
+  /** Legacy prop preserved for backward compatibility. Backend is the brain now. */
+  context?: JarvisContext;
+  /** Legacy prop preserved. Backend URL comes from VITE_BACKEND_URL env var. */
   serverUrl?: string;
 }
 
@@ -221,7 +221,7 @@ function speak(text: string): Promise<void> {
    Main Component
    ═══════════════════════════════════════════════════════════════════ */
 
-export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ context, serverUrl }) => {
+export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ context: _context, serverUrl: _serverUrl }) => {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -247,10 +247,9 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
   useEffect(() => { voiceOnRef.current = voiceOn; }, [voiceOn]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
 
-  const ctx: JarvisContext = {
-    ...context,
-    onLog: (msg) => setLogs((prev) => [msg, ...prev].slice(0, 8)),
-  };
+  // Mirror tool-execution logs into the local log strip (info only — no logic)
+  const _appendLog = (msg: string) => setLogs((prev) => [msg, ...prev].slice(0, 8));
+  void _appendLog;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -268,22 +267,8 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
     setBusy(true);
 
     try {
-      let reply: { text: string; actions: ExecutedAction[] };
-
-      if (serverUrl) {
-        // Call real Express server
-        const res = await fetch(`${serverUrl}/api/jarvis`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmed }),
-        });
-        const data = await res.json();
-        reply = { text: data.reply || data.error || 'No response', actions: data.actions || [] };
-      } else {
-        // Local browser brain
-        const r = await askJarvis(trimmed, ctx);
-        reply = { text: r.text, actions: r.actions };
-      }
+      // ⭐ SINGLE SOURCE OF TRUTH — always goes to backend JARVIS brain
+      const reply = await askJarvis(trimmed);
 
       const jarvisMsg: ChatMsg = {
         id: `j_${Date.now()}`, role: 'jarvis', text: reply.text,
@@ -308,7 +293,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, [context, serverUrl]);
+  }, []);
 
   // ── Speech Recognition ──
   const startRecognition = useCallback(() => {
@@ -606,7 +591,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
 
             <div className="text-[9px] text-slate-600 font-mono text-center mt-1.5 flex items-center justify-center gap-1.5">
               <Zap className="w-2.5 h-2.5" />
-              {serverUrl ? 'Connected to Express server' : 'Cloudflare Worker · Multi-AI'}
+              Quantum Mind Backend · 24/7 JARVIS
               {voiceOn && <span className="text-emerald-400">• Voice active</span>}
             </div>
           </div>

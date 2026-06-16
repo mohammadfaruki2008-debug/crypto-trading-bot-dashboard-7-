@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   BotStatus, 
   MonitorLog,
@@ -30,9 +30,7 @@ import { SettingsView } from './components/SettingsView';
 import { ApiSecurityView } from './components/ApiSecurityView';
 import { TradingViewChartView } from './components/TradingViewChartView';
 import { TradeJarvisFloating } from './components/TradeJarvisFloating';
-import { JarvisContext } from './lib/jarvisBrain';
-import { analyzeQuad, fetchKlines } from './lib/quadEngine';
-import { computeExtraIndicators } from './lib/extraIndicators';
+// JARVIS brain imports removed — it now lives 100% on the backend.
 import { getLivePrice } from './lib/binanceApi';
 
 export function App() {
@@ -44,7 +42,7 @@ export function App() {
   const [showIpModal, setShowIpModal] = useState<boolean>(false);
   const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const jarvisAlerts = useRef<{ symbol: string; price: number; direction: string }[]>([]);
+  // jarvisAlerts removed — alerts now live on the backend (POST /api/alerts)
 
   // Deconstruct state
   const {
@@ -854,98 +852,8 @@ export function App() {
   // Active counters
   const openPosCount = positions.filter((p: TradePosition) => p.status === 'open').length;
 
-  // ─── JARVIS context — wires the agent to real dashboard state/handlers ───
-  const jarvisCtx: JarvisContext = {
-    getPortfolio: () => ({
-      balance: portfolioUsdtBalance,
-      openPositions: positions.filter((p: TradePosition) => p.status === 'open'),
-      coins,
-      botStatus,
-      autoTrade: botConfig?.autoTradeQuadSignals && botConfig?.masterBotEnabled,
-    }),
-    getPrice: async (symbol: string) => {
-      const tp = tickers[symbol]?.price;
-      if (tp) return tp;
-      try { return await getLivePrice(symbol, !!botConfig?.binanceTestnetMode); } catch { return 0; }
-    },
-    getIndicators: async (symbol: string, timeframe: string) => {
-      const price = tickers[symbol]?.price || 100;
-      const { candles } = await fetchKlines(symbol, timeframe, price, 2000);
-      const a = analyzeQuad(symbol, timeframe, candles, 'binance_live');
-      const extra = computeExtraIndicators(candles);
-      return {
-        symbol, timeframe, lastPrice: a.lastPrice,
-        satsTrend: a.satsTrend, tqi: a.tqi, lorePrediction: a.lorePrediction,
-        squeezeOn: a.squeezeOn, squeezeFiredBullish: a.squeezeFiredBullish,
-        comboBuy: a.comboBuy, comboSell: a.comboSell,
-        entry: a.entry, sl: a.sl, tp1: a.tp1, tp2: a.tp2, tp3: a.tp3,
-        rsi: extra.rsi, ichiForce: extra.ichiForce, macdHist: extra.macdHist,
-        poc: extra.poc, smcTrend: extra.smcTrend,
-      };
-    },
-    placeTrade: (p) => {
-      if (!botConfig?.masterBotEnabled) return { ok: false, message: 'Bot is paused — enable Master Switch first' };
-      handleIncomingTradingViewAlert({
-        action: p.side === 'sell' ? 'sell' : 'buy',
-        ticker: p.symbol,
-        price: tickers[p.symbol]?.price || 0,
-        sl: p.sl || 0, tp1: p.tp1 || 0, tp2: p.tp2 || 0, tp3: p.tp3 || 0,
-        secret: alertSettings.webhookSecret,
-        source: 'Quantum Mind (Jarvis)',
-      });
-      return { ok: true, message: `${p.side?.toUpperCase()} ${p.symbol} dispatched to execution engine` };
-    },
-    closePosition: (symbol: string) => {
-      const pos = positions.find((p: TradePosition) => p.ticker === symbol && p.status === 'open');
-      if (!pos) return { ok: false, message: `No open position on ${symbol}` };
-      forceMarketClosePosition(pos.id, tickers[symbol]?.price || pos.currentPrice);
-      return { ok: true, message: `${symbol} position closed at market` };
-    },
-    setAlert: (a) => { jarvisAlerts.current.push(a); },
-    getAlerts: () => jarvisAlerts.current,
-    navigate: (page: string) => {
-      const p = page.toLowerCase();
-      let tab: ActiveTab = 'overview';
-      if (/position|trade|active/.test(p)) tab = 'positions';
-      else if (/coin|pair|universe/.test(p)) tab = 'coins';
-      else if (/alert|log|signal/.test(p)) tab = 'alerts';
-      else if (/monitor|terminal|console/.test(p)) tab = 'monitor';
-      else if (/setting|config/.test(p)) tab = 'settings';
-      else if (/security|api|key/.test(p)) tab = 'security';
-      else if (/quantum|chart|indicator|mind/.test(p)) tab = 'tvchart';
-      else if (/overview|dash/.test(p)) tab = 'overview';
-      setActiveTab(tab);
-    },
-    setSetting: (key: string, value: any) => {
-      const k = key.toLowerCase();
-      if (k === 'testnet') handleUpdateBotConfig({ ...botConfig, binanceTestnetMode: !!value });
-      else if (k === 'autobreakeven') handleUpdateBotConfig({ ...botConfig, autoBreakevenAtTp1: !!value });
-      else if (k === 'trailsl') handleUpdateBotConfig({ ...botConfig, trailSlToTp1AtTp2: !!value });
-      else if (k === 'autotrade') handleUpdateBotConfig({ ...botConfig, autoTradeQuadSignals: !!value });
-      else if (k === 'manualtrade') handleUpdateBotConfig({ ...botConfig, manualTradeApiEnabled: !!value });
-      else if (k === 'maxtrades') handleUpdateBotConfig({ ...botConfig, maxOpenTrades: Number(value) || 5 });
-    },
-    addCoin: (ticker: string, timeframe: string, allocUsdt: number) => {
-      handleAddNewCoin({
-        ticker, baseCoin: ticker.replace('USDT', ''), quoteCoin: 'USDT', timeframe,
-        allocationType: 'fixed_usdt', allocationValue: allocUsdt,
-        defaultStopLossPct: 4, defaultTp1Pct: 3.5, defaultTp2Pct: 7, defaultTp3Pct: 12, isActive: true,
-      });
-      return { ok: true, message: `${ticker} added (${timeframe}, ${allocUsdt} USDT)` };
-    },
-    runBacktest: (_symbol: string) => {
-      return { ok: true, message: 'Backtest ran on recent 2000 candles — win rate 64%, Sharpe 1.8, max DD 8.2R. Details on the backtest view.' };
-    },
-    toggleBot: (running: boolean) => { if (running !== (botStatus === 'running')) toggleBotRunState(); },
-    emergencyStop: () => {
-      if (botStatus === 'running') toggleBotRunState();
-      positions.filter((p: TradePosition) => p.status === 'open').forEach((pp: TradePosition) => {
-        forceMarketClosePosition(pp.id, tickers[pp.ticker]?.price || pp.currentPrice);
-      });
-      return 'All positions closed, bot halted';
-    },
-    onLog: (msg) => addToast('info', '🛰️ JARVIS', msg),
-  };
+  // JARVIS brain lives on the backend now. The frontend just renders the chat;
+  // all trading, monitoring, and tool execution happens server-side.
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
@@ -1075,10 +983,8 @@ export function App() {
       )}
 
       {/* JARVIS — autonomous AI agent floating widget */}
-      <TradeJarvisFloating
-        context={jarvisCtx}
-        serverUrl={(import.meta as any).env?.VITE_BACKEND_URL || ''}
-      />
+      {/* JARVIS — brain lives on the backend; widget is a thin chat client */}
+      <TradeJarvisFloating />
     </div>
   );
 }
