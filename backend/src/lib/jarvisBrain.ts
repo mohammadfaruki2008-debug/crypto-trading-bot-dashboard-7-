@@ -54,7 +54,9 @@ async function callWorker(messages: { role: string; content: string }[]): Promis
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
-  const data = await res.json();
+  
+  // এখানে জাস্ট 'as any' যোগ করে টাইপস্ক্রিপ্টকে শান্ত করা হয়েছে
+  const data = await res.json() as any; 
   return data?.text || data?.reply || data?.choices?.[0]?.message?.content || '';
 }
 
