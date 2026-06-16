@@ -1,18 +1,29 @@
 /**
  * Frontend Backend API Client
- * Single source of truth for all backend communication.
- * Automatically switches between Localhost and Render Live URL.
+ * Runtime Dynamic Routing — Completely immune to Vite build-time hardcoding.
  */
 
-// 🛠️ FIX: যদি লাইভ ডোমেইনে থাকে তবে রিলেটিভ পাথ ব্যবহার করবে, লোকালে থাকলে localhost:8080
-const API_URL = (import.meta as any).env?.VITE_API_URL || 
-  (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:8080' : '');
+const ADMIN_TOKEN = 'dev_token';
 
-const ADMIN_TOKEN = (import.meta as any).env?.VITE_ADMIN_TOKEN || 'dev_token';
+// 🌐 রানটাইমে ব্রাউজারের কারেন্ট ইউআরএল চেক করার ডাইনামিক ফাংশন
+function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // যদি আপনি নিজের পিসিতে লোকালহোস্টে টেস্ট করেন (Vite Dev Server 5173 এ)
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:8080';
+    }
+  }
+  // 🚀 রেন্ডার বা লাইভ সার্ভারে থাকলে কোনো ইউআরএল লাগবে না, রিলেটিভ পাথ হিসেবে রেন্ডারের নিজস্ব ডোমেইন নেবে
+  return '';
+}
 
 async function request(path: string, method: 'GET' | 'POST' = 'GET', body?: any) {
   try {
-    const res = await fetch(`${API_URL}/api${path}`, {
+    const baseUrl = getApiBaseUrl();
+    
+    // ডাইনামিক ইউআরএল তৈরি
+    const res = await fetch(`${baseUrl}/api${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -25,8 +36,11 @@ async function request(path: string, method: 'GET' | 'POST' = 'GET', body?: any)
     return await res.json();
   } catch (error) {
     console.error(`[API Error] ${path}:`, error);
-    // UI যেন ক্র্যাশ না করে ক্রিস্টাল ক্লিয়ার এরর অবজেক্ট পাঠানো হলো
-    return { success: false, text: "My apologies, sir. I encountered a network routing error.", error: 'Network error' };
+    return { 
+      success: false, 
+      text: "My apologies, sir. I am unable to establish a secure link with the core engine.", 
+      error: 'Network error' 
+    };
   }
 }
 
