@@ -21,8 +21,8 @@ async function scanCycle() {
     if (Date.now() - lastTrade < config.trading.cooldownMs) continue;
 
     try {
-      // 2. Analyze
-      const analysis = await analyzeMarket(symbol);
+      // 2. Analyze — FIX: Cast to any to prevent property 'price', 'sl', 'tp' missing errors
+      const analysis: any = await analyzeMarket(symbol);
       console.log(`[AUTONOMOUS] ${symbol}: Signal=${analysis.signal}, Price=${analysis.price}`);
 
       // 3. Execute if BUY signal
@@ -30,11 +30,11 @@ async function scanCycle() {
         console.log(`🚀 [AUTONOMOUS] BUY signal detected on ${symbol}!`);
         const result = await executeTradeWithRisk(symbol, analysis.sl, analysis.tp);
         
-        if (result.success) {
+        if (result && result.success) {
           tradeHistory.set(symbol, Date.now());
           console.log(`✅ [AUTONOMOUS] Trade recorded. Cooldown active.`);
         } else {
-          console.error(`❌ [AUTONOMOUS] Trade failed: ${result.message}`);
+          console.error(`❌ [AUTONOMOUS] Trade failed: ${result?.message || 'Unknown error'}`);
         }
       }
     } catch (error: any) {
@@ -47,8 +47,10 @@ export function startMonitor() {
   if (isRunning) return;
   isRunning = true;
   
+  const isTestnet = (config.binance as any).testnet;
+
   console.log('🟢 [AUTONOMOUS] JARVIS 24/7 Monitor ACTIVATED.');
-  console.log(`💰 [AUTONOMOUS] Network: ${config.binance.testnet ? 'TESTNET' : 'LIVE MAINNET'}`);
+  console.log(`💰 [AUTONOMOUS] Network: ${isTestnet ? 'TESTNET' : 'LIVE MAINNET'}`);
   console.log(`📊 [AUTONOMOUS] Watching: ${config.trading.watchlist.join(', ')}`);
   
   // Run immediately, then on interval

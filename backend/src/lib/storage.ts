@@ -78,20 +78,22 @@ export function getDecryptedCreds() {
 }
 
 /**
- * 🟢 Synchronous JSON Engines to perfectly satisfy trading logic rules
+ * 🟢 Synchronous JSON Engines — Rest Parameters (...) added to swallow any extra arguments
  */
-export function readJson<T = any>(filename: string): T {
+export function readJson<T = any>(filename: string, ...args: any[]): T {
+  // যদি ২য় আর্গুমেন্ট হিসেবে কোনো fallback/ডিফল্ট ডাটা পাঠানো হয়, তবে সেটি ধরবে, নতুবা খালি অ্যারে []
+  const fallback = args[0] !== undefined ? args[0] : ([] as any);
   try {
     const targetPath = path.join(DATA_DIR, filename);
-    if (!fs.existsSync(targetPath)) return [] as any;
+    if (!fs.existsSync(targetPath)) return fallback;
     const raw = fs.readFileSync(targetPath, 'utf8');
-    return JSON.parse(raw || '[]');
+    return JSON.parse(raw || '[]') || fallback;
   } catch {
-    return [] as any;
+    return fallback;
   }
 }
 
-export function writeJson(filename: string, data: any): void {
+export function writeJson(filename: string, data: any, ...args: any[]): void {
   try {
     const targetPath = path.join(DATA_DIR, filename);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -99,7 +101,7 @@ export function writeJson(filename: string, data: any): void {
   } catch (e) {}
 }
 
-export function appendJson(filename: string, item: any): void {
+export function appendJson(filename: string, item: any, ...args: any[]): void {
   try {
     const data = readJson<any[]>(filename);
     data.push({ ...item, id: item.id || `id_${Math.random().toString(36).substring(2, 9)}`, timestamp: Date.now() });
