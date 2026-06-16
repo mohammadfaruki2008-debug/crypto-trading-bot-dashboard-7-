@@ -1,8 +1,7 @@
-export default defineConfig({
+export default defineConfig{
   server: {
     allowedHosts: ['crypto-trading-bot-dashboard-7-b43l.onrender.com'],
   },
-});
 {
 "name": "react-vite-tailwind",
 "private": true,
