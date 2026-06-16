@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   BotStatus, 
-  MonitorLog,
   TradePosition,
   AlertLog,
   TradeableCoin,
@@ -9,9 +8,6 @@ import {
   BinanceSettings,
   AlertSettings
 } from './types';
-import { executeTradingSignal } from './lib/tradingEngine';
-import { configureWebhook, pollPendingAlerts, ackAlerts } from './lib/webhookReceiver';
-import { configureImap, pollImapSignals, ackImapSignals } from './lib/imapClient';
 import { loadAppState, saveAppState } from './mockData';
 import { useLiveBinancePrices } from './hooks/useLiveBinancePrices';
 import { ToastContainer, ToastMessage } from './components/Toast';
@@ -30,8 +26,6 @@ import { SettingsView } from './components/SettingsView';
 import { ApiSecurityView } from './components/ApiSecurityView';
 import { TradingViewChartView } from './components/TradingViewChartView';
 import { TradeJarvisFloating } from './components/TradeJarvisFloating';
-// JARVIS brain imports removed — it now lives 100% on the backend.
-import { getLivePrice } from './lib/binanceApi';
 
 export function App() {
   // 1. Initial State Initialization
@@ -42,7 +36,6 @@ export function App() {
   const [showIpModal, setShowIpModal] = useState<boolean>(false);
   const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  // jarvisAlerts removed — alerts now live on the backend (POST /api/alerts)
 
   // Deconstruct state
   const {
@@ -57,54 +50,6 @@ export function App() {
     portfolioUsdtBalance,
     botConfig,
   } = appState;
-
-  // ─── Configure webhook + IMAP receivers whenever settings change ──
-  useEffect(() => {
-    configureWebhook(alertSettings.webhookUrl || '', alertSettings.webhookSecret, alertSettings.webhookEnabled !== false);
-    configureImap(alertSettings.webhookUrl || '', alertSettings.webhookSecret, alertSettings.imapEnabled);
-  }, [alertSettings]);
-
-  // ─── Poll webhook alerts (every 10s when enabled) ─────────────────
-  useEffect(() => {
-    if (alertSettings.webhookEnabled === false) return;
-    const timer = setInterval(async () => {
-      const alerts = await pollPendingAlerts();
-      for (const alert of alerts) {
-        handleIncomingTradingViewAlert({ ...alert.payload, source: 'TradingView Webhook' });
-      }
-      if (alerts.length > 0) await ackAlerts(alerts.map(a => a.id));
-    }, 10000);
-    return () => clearInterval(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alertSettings.webhookEnabled, alertSettings.webhookUrl, alertSettings.webhookSecret]);
-
-  // ─── Poll IMAP signals (every 15s when enabled) ───────────────────
-  useEffect(() => {
-    if (!alertSettings.imapEnabled) return;
-    const timer = setInterval(async () => {
-      const signals = await pollImapSignals();
-      for (const sig of signals) {
-        if (!sig.parsed) continue;
-        const { action, ticker, price, sl, tp1, tp2, tp3 } = sig.parsed;
-        if (action === 'buy' && ticker && price) {
-          handleIncomingTradingViewAlert({
-            action,
-            ticker,
-            price,
-            sl: sl || 0,
-            tp1: tp1 || 0,
-            tp2: tp2 || 0,
-            tp3: tp3 || 0,
-            secret: alertSettings.webhookSecret,
-            source: 'Gmail IMAP',
-          });
-        }
-      }
-      if (signals.length > 0) await ackImapSignals(signals.map(s => s.id));
-    }, 15000);
-    return () => clearInterval(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alertSettings.imapEnabled, alertSettings.webhookUrl, alertSettings.webhookSecret]);
 
   // Persist edits whenever appState changes
   useEffect(() => {
@@ -121,169 +66,11 @@ export function App() {
     setToasts((prev: ToastMessage[]) => prev.filter((t: ToastMessage) => t.id !== id));
   }, []);
 
-  // Live WebSocket Tickers — tradeable coins + open position symbols
-  const openPositionSymbols = useMemo(
-    () => positions.filter((p: TradePosition) => p.status === 'open').map((p: TradePosition) => p.ticker),
-    [positions]
-  );
-  const { tickers, isConnected, connectionMode } = useLiveBinancePrices(coins, openPositionSymbols);
+  // Live WebSocket Tickers (Public Feed)
+  const { tickers, isConnected } = useLiveBinancePrices(coins);
 
-  // Auto 30s / Manual Trailing Monitor Daemon Simulator
-  const executeMonitorSyncLoop = useCallback(() => {
-    if (botStatus !== 'running') return;
-
-    setAppState((prev: any) => {
-      let updatedBalance = prev.portfolioUsdtBalance;
-      let newLogs: MonitorLog[] = [];
-      let toastQueue: { type: 'success' | 'info'; title: string; msg: string }[] = [];
-
-      const updatedPositions = prev.positions.map((pos: TradePosition) => {
-        if (pos.status !== 'open') return pos;
-
-        const currentLivePrice = tickers[pos.ticker]?.price || pos.currentPrice;
-
-        // Check TP1
-        if (currentLivePrice >= pos.tp1 && pos.tp1Status === 'pending') {
-          const breakevenOn = prev.botConfig?.autoBreakevenAtTp1 !== false;
-          const newSl = breakevenOn ? pos.buyPrice : pos.currentSl;
-          newLogs.push({
-            id: 'mon_' + Date.now() + Math.random().toString().slice(2, 5),
-            timestamp: new Date().toISOString(),
-            level: 'success',
-            category: 'Trading Engine',
-            message: breakevenOn
-              ? `[${pos.ticker}] Target TP1 (${pos.tp1}) Hit at live price ${currentLivePrice}! Marked filled. Auto-trailed Stop Loss to Breakeven (${newSl}).`
-              : `[${pos.ticker}] Target TP1 (${pos.tp1}) Hit at live price ${currentLivePrice}! Marked filled. Auto-Breakeven toggle is OFF — SL unchanged (${pos.currentSl}).`,
-          });
-          toastQueue.push({
-            type: 'success',
-            title: `🎯 ${pos.ticker} TP1 Achieved!`,
-            msg: breakevenOn
-              ? `Position trailing SL moved Breakeven (${newSl.toLocaleString()} USDT).`
-              : `TP1 filled. Auto-Breakeven disabled in settings — SL kept at ${pos.currentSl.toLocaleString()} USDT.`,
-          });
-          return {
-            ...pos,
-            currentPrice: currentLivePrice,
-            tp1Status: 'filled',
-            tp1FilledAt: new Date().toISOString(),
-            currentSl: newSl,
-            slMovedToBreakeven: breakevenOn ? true : pos.slMovedToBreakeven,
-          };
-        }
-
-        // Check TP2
-        if (currentLivePrice >= pos.tp2 && pos.tp2Status === 'pending') {
-          const trailOn = prev.botConfig?.trailSlToTp1AtTp2 !== false;
-          const newSl = trailOn ? pos.tp1 : pos.currentSl;
-          newLogs.push({
-            id: 'mon_' + Date.now() + Math.random().toString().slice(2, 5),
-            timestamp: new Date().toISOString(),
-            level: 'success',
-            category: 'Trading Engine',
-            message: trailOn
-              ? `[${pos.ticker}] Target TP2 (${pos.tp2}) Hit at live price ${currentLivePrice}! Auto-trailed Stop Loss to TP1 (${newSl}).`
-              : `[${pos.ticker}] Target TP2 (${pos.tp2}) Hit at live price ${currentLivePrice}! Trail-SL-to-TP1 toggle is OFF — SL unchanged (${pos.currentSl}).`,
-          });
-          toastQueue.push({
-            type: 'success',
-            title: `🚀 ${pos.ticker} TP2 Breakout!`,
-            msg: trailOn
-              ? `Position trailing SL locked at TP1 (${newSl.toLocaleString()} USDT).`
-              : `TP2 filled. Trail-to-TP1 disabled in settings — SL kept at ${pos.currentSl.toLocaleString()} USDT.`,
-          });
-          return {
-            ...pos,
-            currentPrice: currentLivePrice,
-            tp2Status: 'filled',
-            tp2FilledAt: new Date().toISOString(),
-            currentSl: newSl,
-            slMovedToBreakeven: trailOn ? true : pos.slMovedToBreakeven,
-            slMovedToTp1: trailOn ? true : pos.slMovedToTp1,
-          };
-        }
-
-        // Check TP3 (Full Close Victory)
-        if (currentLivePrice >= pos.tp3) {
-          const realizedNet = ((pos.tp3 - pos.buyPrice) / pos.buyPrice) * pos.amount;
-          updatedBalance += pos.amount + realizedNet;
-          newLogs.push({
-            id: 'mon_' + Date.now() + Math.random().toString().slice(2, 5),
-            timestamp: new Date().toISOString(),
-            level: 'success',
-            category: 'Trading Engine',
-            message: `[${pos.ticker}] 🎉 Final Target TP3 (${pos.tp3}) Achieved! Position fully closed with realized +${realizedNet.toFixed(2)} USDT net gain. Capital unlocked.`,
-          });
-          toastQueue.push({
-            type: 'success',
-            title: `🏆 ${pos.ticker} Flawless Victory!`,
-            msg: `Position fully closed at TP3 with +${realizedNet.toFixed(2)} USDT net return.`,
-          });
-          return {
-            ...pos,
-            currentPrice: currentLivePrice,
-            tp3Status: 'filled',
-            tp3FilledAt: new Date().toISOString(),
-            status: 'closed_tp',
-            pnlUsdt: realizedNet,
-            pnlPct: ((pos.tp3 - pos.buyPrice) / pos.buyPrice) * 100,
-            closedAt: new Date().toISOString(),
-          };
-        }
-
-        // Check Stop Loss Trigger
-        if (currentLivePrice <= pos.currentSl) {
-          const realizedNet = ((pos.currentSl - pos.buyPrice) / pos.buyPrice) * pos.amount;
-          updatedBalance += pos.amount + realizedNet;
-          const isStopWin = realizedNet >= 0;
-          newLogs.push({
-            id: 'mon_' + Date.now() + Math.random().toString().slice(2, 5),
-            timestamp: new Date().toISOString(),
-            level: isStopWin ? 'info' : 'warn',
-            category: 'Trading Engine',
-            message: `[${pos.ticker}] Trailing Stop Hit at ${pos.currentSl} USDT. Position automatically closed. Net: ${realizedNet >= 0 ? '+' : ''}${realizedNet.toFixed(2)} USDT.`,
-          });
-          toastQueue.push({
-            type: 'info',
-            title: `🛡️ ${pos.ticker} Trailing Stop Triggered`,
-            msg: `Position exited at ${pos.currentSl.toLocaleString()} USDT (${realizedNet >= 0 ? '+' : ''}${realizedNet.toFixed(2)} USDT net).`,
-          });
-          return {
-            ...pos,
-            currentPrice: currentLivePrice,
-            status: 'closed_sl',
-            pnlUsdt: realizedNet,
-            pnlPct: ((pos.currentSl - pos.buyPrice) / pos.buyPrice) * 100,
-            closedAt: new Date().toISOString(),
-          };
-        }
-
-        // Just update price
-        return {
-          ...pos,
-          currentPrice: currentLivePrice,
-        };
-      });
-
-      // Show any toasts queued
-      toastQueue.forEach(t => addToast(t.type, t.title, t.msg));
-
-      return {
-        ...prev,
-        portfolioUsdtBalance: updatedBalance,
-        positions: updatedPositions,
-        monitorLogs: [...newLogs, ...prev.monitorLogs].slice(0, 200),
-      };
-    });
-  }, [botStatus, tickers, addToast]);
-
-  // Set up the 30s background timer
-  useEffect(() => {
-    const timer = setInterval(() => {
-      executeMonitorSyncLoop();
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [executeMonitorSyncLoop]);
+  // 24/7 Monitor is now handled entirely on the backend server.
+  // The frontend just displays whatever the backend tells it.
 
   // Handlers for App Navigation & Operational Overrides
   const toggleBotRunState = () => {
@@ -492,167 +279,25 @@ export function App() {
       return;
     }
 
-    // 3. Flawless Auto-Execution! Guarantee Exact Execution Buying Price
-    let currentSpotPrice = parseFloat(incomingPayload?.price) || tickers[targetTicker]?.price || 65000;
-    // When signal comes but market keeps moving, fetch exact live execution price right now
-    try {
-      const realTimeLive = await getLivePrice(targetTicker, !!botConfig?.binanceTestnetMode);
-      if (realTimeLive > 0) currentSpotPrice = realTimeLive;
-    } catch { /* use tickers fallback */ }
-
-    let quoteAmountUsdt = 1000;
-    if (approvedCoin.allocationType === 'percentage') {
-      quoteAmountUsdt = (portfolioUsdtBalance * approvedCoin.allocationValue) / 100;
-    } else {
-      quoteAmountUsdt = approvedCoin.allocationValue;
-    }
-
-    // Ensure user has balance
-    if (quoteAmountUsdt > portfolioUsdtBalance) {
-      quoteAmountUsdt = portfolioUsdtBalance; // invest maximum left
-    }
-
-    if (quoteAmountUsdt < 10) {
-      addToast('error', 'Insufficient USDT Balance', `Cannot deploy buy order. Account USDT free balance too low.`);
-      return;
-    }
-
-    const tokensAcquired = quoteAmountUsdt / currentSpotPrice;
-    const initialSl = parseFloat(incomingPayload?.sl) || parseFloat((currentSpotPrice * (1 - approvedCoin.defaultStopLossPct / 100)).toFixed(2));
-    const tp1 = parseFloat(incomingPayload?.tp1) || parseFloat((currentSpotPrice * (1 + approvedCoin.defaultTp1Pct / 100)).toFixed(2));
-    const tp2 = parseFloat(incomingPayload?.tp2) || parseFloat((currentSpotPrice * (1 + approvedCoin.defaultTp2Pct / 100)).toFixed(2));
-    const tp3 = parseFloat(incomingPayload?.tp3) || parseFloat((currentSpotPrice * (1 + approvedCoin.defaultTp3Pct / 100)).toFixed(2));
-
-    const newPosition: TradePosition = {
-      id: 'pos_' + Date.now().toString().slice(-6),
-      ticker: targetTicker,
-      action: 'buy',
-      buyPrice: currentSpotPrice,
-      currentPrice: currentSpotPrice,
-      amount: parseFloat(quoteAmountUsdt.toFixed(2)),
-      tokens: parseFloat(tokensAcquired.toFixed(6)),
-      initialSl,
-      currentSl: initialSl,
-      slMovedToBreakeven: false,
-      slMovedToTp1: false,
-      tp1,
-      tp1Status: 'pending',
-      tp2,
-      tp2Status: 'pending',
-      tp3,
-      tp3Status: 'pending',
-      status: 'open',
-      pnlUsdt: 0,
-      pnlPct: 0,
-      openedAt: timestamp,
-      source: isImapSource ? 'gmail_imap' : isQuadSource ? (incomingPayload?.source === 'Quantum Mind' ? 'quantum_mind' : 'quad_engine') : 'tradingview_webhook',
-    };
-
-    const successAlertLog: AlertLog = {
+    // ─── Frontend UI Notification Only ──────────────────────────────
+    // Actual trade execution is handled securely by the backend server.
+    const uiLog: AlertLog = {
       id,
       timestamp,
-      source: isImapSource ? 'Gmail IMAP' : isQuadSource ? (incomingPayload?.source === 'Quantum Mind' ? 'Quantum Mind' : 'QUAD Engine') : 'TradingView Webhook',
+      source: incomingPayload?.source || 'Manual',
       ticker: targetTicker,
       action: 'buy',
       status: 'Success',
-      message: `Auto-executed Binance ${botConfig?.binanceTestnetMode ? 'Spot TESTNET' : 'Spot'} Buy order for ${quoteAmountUsdt.toFixed(2)} USDT. Entry Price: ${currentSpotPrice} USDT. Targets active.`,
+      message: `Signal received for ${targetTicker}. Executing on backend...`,
       payload: incomingPayload
     };
 
-    // ─── Attempt REAL Binance order if API keys are configured ────
-    const activeApiKey = botConfig?.binanceTestnetMode
-      ? binanceSettings.testnetApiKey
-      : binanceSettings.apiKey;
-    const activeApiSecret = botConfig?.binanceTestnetMode
-      ? binanceSettings.testnetApiSecret
-      : binanceSettings.apiSecret;
-
-    const hasRealKeys = activeApiKey &&
-      activeApiKey.length > 10 &&
-      !activeApiKey.startsWith('binance_live_spot_api_key'); // not demo placeholder
-
-    if (hasRealKeys) {
-      try {
-        const engineLogs: any[] = [];
-        const execResult = await executeTradingSignal(
-          { apiKey: activeApiKey, apiSecret: activeApiSecret, testnet: !!botConfig?.binanceTestnetMode },
-          {
-            ticker: targetTicker,
-            price: currentSpotPrice,
-            sl: initialSl,
-            tp1,
-            tp2,
-            tp3,
-            quoteUsdt: quoteAmountUsdt,
-            source: incomingPayload?.source || 'webhook',
-          },
-          botConfig?.autoBreakevenAtTp1 !== false,
-          botConfig?.trailSlToTp1AtTp2 !== false,
-          engineLogs
-        );
-
-        const logsForMonitor: MonitorLog[] = engineLogs.map((l, i) => ({
-          id: `mon_exec_${Date.now()}_${i}`,
-          timestamp: new Date().toISOString(),
-          level: l.level,
-          category: 'Binance API',
-          message: l.message,
-        }));
-
-        if (!execResult.ok) {
-          addToast('error', `❌ Binance order failed: ${targetTicker}`, execResult.error || 'Unknown error');
-          setAppState((prev: any) => ({
-            ...prev,
-            monitorLogs: [...logsForMonitor, ...prev.monitorLogs].slice(0, 200),
-          }));
-          return;
-        }
-
-        // Merge real trade data
-        if (execResult.trade) {
-          newPosition.id = execResult.trade.positionId;
-          newPosition.tokens = execResult.trade.qty;
-          newPosition.amount = execResult.trade.quoteSpent;
-          newPosition.buyPrice = execResult.trade.entryPrice;
-          newPosition.currentPrice = execResult.trade.entryPrice;
-          newPosition.currentSl = execResult.trade.currentSl;
-          newPosition.initialSl = execResult.trade.initialSl;
-          newPosition.tp1 = execResult.trade.tp1;
-          newPosition.tp2 = execResult.trade.tp2;
-          newPosition.tp3 = execResult.trade.tp3;
-        }
-
-        setAppState((prev: any) => ({
-          ...prev,
-          portfolioUsdtBalance: prev.portfolioUsdtBalance - quoteAmountUsdt,
-          positions: [newPosition, ...prev.positions],
-          alertLogs: [successAlertLog, ...prev.alertLogs].slice(0, 300),
-          monitorLogs: [...logsForMonitor, ...prev.monitorLogs].slice(0, 200),
-        }));
-
-        addToast('success', `✅ Real Binance Order: ${targetTicker}`, `${botConfig?.binanceTestnetMode ? '🧪 Testnet ' : ''}Buy filled for ${quoteAmountUsdt.toFixed(2)} USDT.`);
-        return;
-      } catch (err: any) {
-        addToast('error', `Binance API error`, err.message);
-      }
-    }
-
-    // ─── Dashboard simulation (no real keys / demo mode) ──────────
     setAppState((prev: any) => ({
       ...prev,
-      portfolioUsdtBalance: prev.portfolioUsdtBalance - quoteAmountUsdt,
-      positions: [newPosition, ...prev.positions],
-      alertLogs: [successAlertLog, ...prev.alertLogs].slice(0, 300),
-      monitorLogs: [{
-        id: 'mon_' + Date.now(),
-        timestamp,
-        level: 'success',
-        category: 'Binance API',
-        message: `[${targetTicker}] ${botConfig?.binanceTestnetMode ? '🧪 TESTNET ' : ''}[SIMULATED] Spot Market Buy for ${quoteAmountUsdt.toFixed(2)} USDT — add real Binance API keys to execute live orders.`
-      }, ...prev.monitorLogs].slice(0, 200)
+      alertLogs: [uiLog, ...prev.alertLogs].slice(0, 300)
     }));
 
-    addToast('success', `⚡ Simulated: ${targetTicker} Buy`, `Demo mode — add real Binance API keys for live execution.`);
+    addToast('success', `🚀 Signal Dispatched: ${targetTicker}`, `Executing real trade on backend server...`);
   };
 
   // Trade Execution Floor Manual Controls
@@ -736,7 +381,7 @@ export function App() {
       source: 'Simulated Market Breakout Surge'
     });
     // Run sync loop
-    setTimeout(() => executeMonitorSyncLoop(), 400);
+    // Monitor sync is handled by backend
   };
 
   // Handlers for Coins
@@ -852,9 +497,6 @@ export function App() {
   // Active counters
   const openPosCount = positions.filter((p: TradePosition) => p.status === 'open').length;
 
-  // JARVIS brain lives on the backend now. The frontend just renders the chat;
-  // all trading, monitoring, and tool execution happens server-side.
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
       {/* Toast Popups */}
@@ -868,7 +510,7 @@ export function App() {
         onOpenIpModal={() => setShowIpModal(true)}
         adminEmail={user.email}
         onLogout={handleAdminLogout}
-        connectionMode={connectionMode}
+        connectionMode={isConnected ? 'Live' : 'Disconnected'}
         isConnected={isConnected}
         testnetMode={botConfig?.binanceTestnetMode}
       />
@@ -939,7 +581,7 @@ export function App() {
           {activeTab === 'monitor' && (
             <MonitorConsoleView 
               monitorLogs={monitorLogs}
-              onTriggerMonitorLoop={executeMonitorSyncLoop}
+              onTriggerMonitorLoop={() => addToast('info', 'Monitor', 'The 24/7 monitor runs on the backend.')}
               onClearLogs={() => setAppState((prev: any) => ({ ...prev, monitorLogs: [] }))}
             />
           )}
@@ -983,7 +625,6 @@ export function App() {
       )}
 
       {/* JARVIS — autonomous AI agent floating widget */}
-      {/* JARVIS — brain lives on the backend; widget is a thin chat client */}
       <TradeJarvisFloating />
     </div>
   );

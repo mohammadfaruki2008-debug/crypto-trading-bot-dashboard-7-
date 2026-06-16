@@ -1,1 +1,1 @@
-# Persistent storage folder — trades, alerts, knowledge base
+# This directory is for local file storage if not using Supabase.

@@ -1,42 +1,19 @@
 services:
   - type: web
     name: quantum-mind-backend
-    runtime: node
+    env: node
     rootDir: backend
-    plan: starter
-    region: singapore
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
-    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NODE_VERSION
-        value: "22"
-      - key: NPM_CONFIG_PRODUCTION
-        value: "false"
-      - key: BINANCE_API_KEY
-        sync: false
-      - key: BINANCE_SECRET
-        sync: false
-      - key: BINANCE_TESTNET
-        value: "true"
-      - key: JARVIS_WORKER_URL
-        value: https://quantum-mind.mohammadfaruki2008.workers.dev/
+      - key: ADMIN_TOKEN
+        generateValue: true
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      - key: WEBHOOK_SECRET
-        generateValue: true
-      - key: ADMIN_TOKEN
-        generateValue: true
-      - key: FRONTEND_URL
+      - key: SECRET_ENCRYPTION_KEY
         sync: false
-      - key: MONITOR_SYMBOLS
-        value: BTCUSDT,ETHUSDT,SOLUSDT
-      - key: MONITOR_INTERVAL_MIN
-        value: "15"
-      - key: MONITOR_AUTOSTART
-        value: "true"

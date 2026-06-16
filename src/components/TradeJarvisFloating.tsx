@@ -4,16 +4,26 @@ import {
   TrendingUp, TrendingDown, Radio, Trash2, Terminal,
   FileCode2, CheckCircle2, AlertTriangle, Mic, MicOff, Volume2
 } from 'lucide-react';
-import { askJarvis, JarvisContext, ExecutedAction } from '../lib/jarvisBrain';
+import { backendApi as api } from '../lib/backendApi';
+
+export interface ExecutedAction {
+  action: string;
+  params: Record<string, unknown>;
+  result: { ok: boolean; message: string; data?: unknown };
+}
+
+interface JarvisContext {
+  onLog?: (msg: string) => void;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
    ═══════════════════════════════════════════════════════════════════ */
 
 interface TradeJarvisFloatingProps {
-  /** Legacy prop preserved for backward compatibility. Backend is the brain now. */
   context?: JarvisContext;
-  /** Legacy prop preserved. Backend URL comes from VITE_BACKEND_URL env var. */
+  /** Optional: if your Express server is running, set this to e.g. "http://localhost:8080".
+   *  When set, Jarvis calls POST /api/jarvis on the server instead of the local brain. */
   serverUrl?: string;
 }
 
@@ -221,7 +231,7 @@ function speak(text: string): Promise<void> {
    Main Component
    ═══════════════════════════════════════════════════════════════════ */
 
-export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ context: _context, serverUrl: _serverUrl }) => {
+export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ context, serverUrl }) => {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -229,7 +239,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
     id: 'intro', role: 'jarvis', ts: Date.now(),
     text: "Good day, sir. **JARVIS** online — voice and text. I control the entire Quantum Mind dashboard. Click the 🎤 or just type. How may I assist?",
   }]);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -247,9 +257,9 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
   useEffect(() => { voiceOnRef.current = voiceOn; }, [voiceOn]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
 
-  // Mirror tool-execution logs into the local log strip (info only — no logic)
-  const _appendLog = (msg: string) => setLogs((prev) => [msg, ...prev].slice(0, 8));
-  void _appendLog;
+  useEffect(() => {
+    if (context?.onLog) context.onLog("Backend AI connected.");
+  }, [context]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -267,8 +277,16 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
     setBusy(true);
 
     try {
-      // ⭐ SINGLE SOURCE OF TRUTH — always goes to backend JARVIS brain
-      const reply = await askJarvis(trimmed);
+      let reply: { text: string; actions: ExecutedAction[] };
+
+      // Always call the backend brain (which has the real AI and tools)
+      try {
+        const data = await api.askJarvis(trimmed);
+        reply = { text: data.reply || 'No response from backend.', actions: [] };
+      } catch (apiErr) {
+        // Fallback if backend is offline
+        reply = { text: "Sir, I cannot reach the backend server. Please ensure the Quantum Mind backend is running.", actions: [] };
+      }
 
       const jarvisMsg: ChatMsg = {
         id: `j_${Date.now()}`, role: 'jarvis', text: reply.text,
@@ -293,7 +311,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
       setBusy(false);
       inputRef.current?.focus();
     }
-  }, []);
+  }, [context, serverUrl]);
 
   // ── Speech Recognition ──
   const startRecognition = useCallback(() => {
@@ -591,7 +609,7 @@ export const TradeJarvisFloating: React.FC<TradeJarvisFloatingProps> = ({ contex
 
             <div className="text-[9px] text-slate-600 font-mono text-center mt-1.5 flex items-center justify-center gap-1.5">
               <Zap className="w-2.5 h-2.5" />
-              Quantum Mind Backend · 24/7 JARVIS
+              {serverUrl ? 'Connected to Express server' : 'Cloudflare AI Proxy · Multi-Model'}
               {voiceOn && <span className="text-emerald-400">• Voice active</span>}
             </div>
           </div>

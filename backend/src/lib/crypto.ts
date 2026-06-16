@@ -1,54 +1,36 @@
-/**
- * AES-256-GCM encryption helpers.
- * Key derived from SECRET_ENCRYPTION_KEY env var.
- *
- * Format: <iv_hex>:<authTag_hex>:<ciphertext_hex>
- */
 import crypto from 'crypto';
-import { config } from '../config';
 
-const ALGO = 'aes-256-gcm';
+const ALGORITHM = 'aes-256-gcm';
+const SECRET_KEY = process.env.SECRET_ENCRYPTION_KEY || ''; // 64 hex chars
 
-function deriveKey(): Buffer {
-  const raw = config.security.encryptionKey;
-  if (!raw || raw.length < 16) {
-    throw new Error('SECRET_ENCRYPTION_KEY missing or too short (need 32+ chars). Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+function getKey(): Buffer {
+  if (SECRET_KEY.length !== 64) {
+    throw new Error('SECRET_ENCRYPTION_KEY must be 64 hex characters.');
   }
-  // SHA-256 derives a deterministic 32-byte key from any input length
-  return crypto.createHash('sha256').update(raw).digest();
+  return Buffer.from(SECRET_KEY, 'hex');
 }
 
-/** Encrypt plaintext. Returns "iv:tag:ciphertext" hex string. */
-export function encrypt(plaintext: string): string {
-  if (!plaintext) return '';
-  const key = deriveKey();
-  const iv = crypto.randomBytes(12); // GCM standard
-  const cipher = crypto.createCipheriv(ALGO, key, iv);
-  const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+export function encrypt(text: string): string {
+  if (!text) return '';
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(ALGORITHM, getKey(), iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
 }
 
-/** Decrypt the format produced by encrypt(). Returns plaintext or '' on failure. */
-export function decrypt(payload: string): string {
-  if (!payload || !payload.includes(':')) return '';
+export function decrypt(encryptedText: string): string {
+  if (!encryptedText) return '';
   try {
-    const [ivHex, tagHex, dataHex] = payload.split(':');
-    if (!ivHex || !tagHex || !dataHex) return '';
-    const key = deriveKey();
-    const decipher = crypto.createDecipheriv(ALGO, key, Buffer.from(ivHex, 'hex'));
-    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-    const dec = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
-    return dec.toString('utf8');
-  } catch (err: any) {
-    console.error('[CRYPTO] decrypt failed:', err.message);
+    const [ivHex, authTagHex, encryptedData] = encryptedText.split(':');
+    const decipher = crypto.createDecipheriv(ALGORITHM, getKey(), Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+    let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (error) {
+    console.error('[Crypto] Decryption failed:', error);
     return '';
   }
-}
-
-/** Show "abcd…wxyz" preview without leaking the secret. */
-export function preview(secret: string): string {
-  if (!secret) return '(empty)';
-  if (secret.length <= 8) return '••••';
-  return secret.slice(0, 4) + '…' + secret.slice(-4);
 }
