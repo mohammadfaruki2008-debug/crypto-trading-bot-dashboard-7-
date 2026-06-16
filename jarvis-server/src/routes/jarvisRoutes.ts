@@ -30,18 +30,15 @@ router.post('/jarvis', async (req: Request, res: Response) => {
 
     const result = await askJarvis(message, conversationHistory);
 
-    // askJarvis returns { text: string, actions: any[], confirmationRequired: boolean }
-    const replyText = result.text || result.reply || '';
-
-    conversationHistory.push({ role: 'assistant', content: replyText });
+    conversationHistory.push({ role: 'assistant', content: result.reply });
 
     // Trim history to last 40 messages
     while (conversationHistory.length > 40) conversationHistory.shift();
 
     res.json({
-      reply: replyText,
-      confirmationRequired: result.confirmationRequired || false,
-      actions: result.actions || [],
+      reply: result.reply,
+      confirmationRequired: result.confirmationRequired,
+      actions: result.actions,
     });
   } catch (err: any) {
     console.error('[JARVIS ROUTE]', err);

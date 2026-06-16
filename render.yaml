@@ -1,0 +1,38 @@
+# Render deployment config — Quantum Mind as Static Site
+# 
+# Usage on Render:
+# 1. New → Static Site
+# 2. Connect your GitHub repo
+# 3. Settings:
+#    - Build Command: npm install && npm run build
+#    - Publish Directory: dist
+#    - Node Version: set NODE_VERSION env var = 22
+#
+# IMPORTANT — Root Directory: LEAVE EMPTY (use repo root)
+# The build expects package.json at the repository root.
+#
+# If you want a server-side deploy (Express + JARVIS backend),
+# use the backend project in this repo (currently NOT deployed here).
+
+services:
+  - type: web
+    name: quantum-mind-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable

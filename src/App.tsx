@@ -1075,7 +1075,10 @@ export function App() {
       )}
 
       {/* JARVIS — autonomous AI agent floating widget */}
-      <TradeJarvisFloating context={jarvisCtx} />
+      <TradeJarvisFloating
+        context={jarvisCtx}
+        serverUrl={(import.meta as any).env?.VITE_BACKEND_URL || ''}
+      />
     </div>
   );
 }

@@ -1,0 +1,26 @@
+{
+  "name": "quad-engine-ai",
+  "version": "1.0.0",
+  "description": "Multi-indicator ensemble crypto trading bot with ML meta-layer",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc",
+    "backtest": "tsx src/backtest/backtestEngine.ts",
+    "dashboard": "tsx src/dashboard/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "express": "^5.0.0",
+    "ioredis": "^5.4.1",
+    "postgres": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
