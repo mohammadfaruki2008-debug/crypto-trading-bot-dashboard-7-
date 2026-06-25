@@ -1,5 +1,5 @@
 // ============================================================================
-// QuadEngine.ts – Final version (NO clamp conflicts)
+// QuadEngine.ts – Final version with safe number clamping helper
 // ============================================================================
 
 export interface Candle {
@@ -47,6 +47,13 @@ export interface QuadBar extends Candle {
   hitTp3: boolean;
   hitSl: boolean;
   realizedR: number | null;
+}
+
+// ─── Safe number clamping helper (avoids TS overload ambiguity) ───
+function clampNum(value: number, lower: number, upper: number): number {
+  if (value < lower) return lower;
+  if (value > upper) return upper;
+  return value;
 }
 
 // ─── Helper Functions ───────────────────────────────────────────────────
@@ -227,6 +234,8 @@ function adx(highs: number[], lows: number[], closes: number[], period: number):
   return rma(dx, period);
 }
 
+// ─── EXACT jdehorty/MLExtensions normalizations ─────────────────────
+
 function normalizeHistoric(src: number[]): number[] {
   let hMin = 1e10;
   let hMax = -1e10;
@@ -276,12 +285,12 @@ function nAdx(highs: number[], lows: number[], closes: number[], len: number): n
     dx[i] = !isFinite(sum) || sum === 0 ? NaN : (Math.abs(diP - diN) / sum) * 100;
   }
   const adxArr = rma(dx, len);
-  return adxArr.map(v => (isNaN(v) ? NaN : Math.max(0, Math.min(1, v / 100))));
+  return adxArr.map(v => (isNaN(v) ? NaN : clampNum(v / 100, 0, 1)));
 }
 
 function rescale(v: number, iLo: number, iHi: number, oLo: number, oHi: number): number {
   if (iHi === iLo) return oLo;
-  const t = Math.max(0, Math.min(1, (v - iLo) / (iHi - iLo)));
+  const t = clampNum((v - iLo) / (iHi - iLo), 0, 1);
   return oLo + t * (oHi - oLo);
 }
 
@@ -461,18 +470,18 @@ function calcSATS(candles: Candle[]): SATSResult {
   const loL = lowest(lows, structLen);
 
   const tqiArr: number[] = closes.map((c, i) => {
-    const erV = isNaN(er[i]) ? 0 : Math.max(0, Math.min(1, er[i]));
+    const erV = isNaN(er[i]) ? 0 : clampNum(er[i], 0, 1);
     let tqiVol = 0.5;
     if (!isNaN(volMean[i]) && !isNaN(volSd[i]) && volSd[i] > 0) {
       const vz = (volumes[i] - volMean[i]) / volSd[i];
-      tqiVol = Math.max(0, Math.min(1, rescale(vz, -1, 2, 0, 1)));
+      tqiVol = clampNum(rescale(vz, -1, 2, 0, 1), 0, 1);
     } else if (!isNaN(atrBaseline[i]) && atrBaseline[i] > 0) {
-      tqiVol = Math.max(0, Math.min(1, rescale(rawAtr[i] / atrBaseline[i], 0.6, 1.8, 0, 1)));
+      tqiVol = clampNum(rescale(rawAtr[i] / atrBaseline[i], 0.6, 1.8, 0, 1), 0, 1);
     }
     const hi = hiH[i], lo = loL[i];
     const range = isNaN(hi) || isNaN(lo) ? 0 : hi - lo;
     const pos = range === 0 ? 0.5 : (c - (isNaN(lo) ? c : lo)) / range;
-    const tqiStruct = Math.max(0, Math.min(1, Math.abs(pos - 0.5) * 2));
+    const tqiStruct = clampNum(Math.abs(pos - 0.5) * 2, 0, 1);
     let aligned = 0;
     if (i >= momLen) {
       const winChg = c - closes[i - momLen];
@@ -485,7 +494,7 @@ function calcSATS(candles: Candle[]): SATSResult {
     }
     const tqiMom = i >= momLen ? aligned / momLen : 0.5;
     const raw = (erV * wEr + tqiVol * wVol + tqiStruct * wStruct + tqiMom * wMom) / wSum;
-    return Math.max(0, Math.min(1, raw));
+    return clampNum(raw, 0, 1);
   });
 
   const pvL = pivotLows(lows, pivotLen);
@@ -895,7 +904,7 @@ export function runQuadEngine(candles: Candle[], userSettings: EngineSettings = 
       const entry = closes[i];
       const atr = isNaN(sats.atrValue[i]) ? 0 : sats.atrValue[i];
       const loreConf = Math.abs(pred);
-      const confFactor = Math.max(0.8, Math.min(1.5, 1.0 + 0.5 * (loreConf / 10.0)));
+      const confFactor = clampNum(1.0 + 0.5 * (loreConf / 10.0), 0.8, 1.5);
       const t1R = tp1R * confFactor, t2R = tp2R * confFactor, t3R = tp3R * confFactor;
 
       if (comboBuy) {
@@ -1062,7 +1071,7 @@ export function analyzeQuad(
   }
 
   const loreConf = Math.abs(last.lorePrediction);
-  const confFactor = Math.max(0.8, Math.min(1.5, 1.0 + 0.5 * (loreConf / 10.0)));
+  const confFactor = clampNum(1.0 + 0.5 * (loreConf / 10.0), 0.8, 1.5);
 
   if (planSl === null) {
     const approxAtr = Math.abs(last.close - last.stLine) / 2 || last.close * 0.01;
@@ -1270,13 +1279,13 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     const priceCloud = src > cloudTop ? ((src - cloudTop) / normBase) * (forceScale * 0.45)
                      : src < cloudBot ? ((src - cloudBot) / normBase) * (forceScale * 0.45) : 0;
     const cloudStruct = cloudBias * ((cloudSize / normBase) * (forceScale * 0.30));
-    rawForceArr[i] = Math.max(-forceScale, Math.min(forceScale, tkSpread + priceCloud + cloudStruct));
+    rawForceArr[i] = clampNum(tkSpread + priceCloud + cloudStruct, -forceScale, forceScale);
     if (i === last) {
       tkLast = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
       priceVsCloudLast = src > cloudTop ? 1 : src < cloudBot ? -1 : 0;
     }
   }
-  const forceSmoothed = ema(rawForceArr, forceSmoothLen).map((v) => Math.max(-100, Math.min(100, v)));
+  const forceSmoothed = ema(rawForceArr, forceSmoothLen).map((v) => clampNum(v, -100, 100));
   const ichiForce = forceSmoothed[last] || 0;
   const ichiPrev = forceSmoothed[last - 1] || 0;
   const ichiState =
@@ -1321,8 +1330,8 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     for (const c of slice) {
       const rng = c.high - c.low;
       if (rng > 0 && step > 0) {
-        const sB = Math.max(0, Math.min(bins - 1, Math.floor((c.low - minP) / step)));
-        const eB = Math.max(0, Math.min(bins - 1, Math.floor((c.high - minP) / step)));
+        const sB = clampNum(Math.floor((c.low - minP) / step), 0, bins - 1);
+        const eB = clampNum(Math.floor((c.high - minP) / step), 0, bins - 1);
         for (let b = sB; b <= eB; b++) {
           const binLo = minP + b * step, binHi = binLo + step;
           const overlap = Math.max(Math.min(c.high, binHi) - Math.max(c.low, binLo), 0);
