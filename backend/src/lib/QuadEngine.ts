@@ -1,7 +1,6 @@
 // ============================================================================
 // QuadEngine.ts – Pine Script v6 "Quad-Engine Trading System" TypeScript port
 // FRESH NEIGHBOUR SELECTION PER BAR – matches Pine Script exactly
-// No debug logs, no persistent arrays across bars
 // ============================================================================
 
 export interface Candle {
@@ -238,6 +237,7 @@ function clamp01(v: number): number {
 }
 
 // ─── EXACT jdehorty/MLExtensions normalizations ─────────────────────
+
 function normalizeHistoric(src: number[]): number[] {
   let hMin = 1e10;
   let hMax = -1e10;
@@ -336,6 +336,26 @@ function pivotHighs(highs: number[], len: number): (number | null)[] {
     }
     return pv;
   });
+}
+
+function pivLow(arr: number[], left: number, right: number, i: number): boolean {
+  const p = i - right;
+  if (p - left < 0 || i >= arr.length || isNaN(arr[p])) return false;
+  for (let j = p - left; j <= p + right; j++) {
+    if (j === p) continue;
+    if (isNaN(arr[j]) || arr[j] < arr[p]) return false;
+  }
+  return true;
+}
+
+function pivHigh(arr: number[], left: number, right: number, i: number): boolean {
+  const p = i - right;
+  if (p - left < 0 || i >= arr.length || isNaN(arr[p])) return false;
+  for (let j = p - left; j <= p + right; j++) {
+    if (j === p) continue;
+    if (isNaN(arr[j]) || arr[j] > arr[p]) return false;
+  }
+  return true;
 }
 
 function filterVolatility(tr: number[]): boolean[] {
@@ -1185,6 +1205,8 @@ export interface ExtraIndicators {
   rsiHiddenBear: boolean;
   ichiForce: number;
   ichiState: string;
+  ichiLong: boolean;
+  ichiShort: boolean;
   macd: number;
   macdSignal: number;
   macdHist: number;
@@ -1211,14 +1233,13 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
 
   const rsiVal = rsiSeries(closes, 14);
 
-  // RSI Divergence Pro
   const leftBars = 2, rightBars = 2, minDist = 5, minRsiDiff = 2.0;
   let lowBar1 = NaN, lowBar2 = NaN, lowP1 = NaN, lowP2 = NaN, lowR1 = NaN, lowR2 = NaN;
   let hiBar1 = NaN, hiBar2 = NaN, hiP1 = NaN, hiP2 = NaN, hiR1 = NaN, hiR2 = NaN;
   let rRegBull = false, rRegBear = false, rHidBull = false, rHidBear = false;
   for (let i = 0; i < n; i++) {
-    const priceLowPiv = pivotLows(lows, leftBars, rightBars, i);
-    const rsiLowPiv = pivotLows(rsiVal, leftBars, rightBars, i);
+    const priceLowPiv = pivLow(lows, leftBars, rightBars, i);
+    const rsiLowPiv = pivLow(rsiVal, leftBars, rightBars, i);
     if (priceLowPiv && rsiLowPiv) {
       const pb = i - rightBars;
       lowBar2 = lowBar1; lowP2 = lowP1; lowR2 = lowR1;
@@ -1229,8 +1250,8 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
         if (lowP1 > lowP2 && lowR1 < lowR2 && fresh) rHidBull = true;
       }
     }
-    const priceHighPiv = pivotHighs(highs, leftBars, rightBars, i);
-    const rsiHighPiv = pivotHighs(rsiVal, leftBars, rightBars, i);
+    const priceHighPiv = pivHigh(highs, leftBars, rightBars, i);
+    const rsiHighPiv = pivHigh(rsiVal, leftBars, rightBars, i);
     if (priceHighPiv && rsiHighPiv) {
       const pb = i - rightBars;
       hiBar2 = hiBar1; hiP2 = hiP1; hiR2 = hiR1;
@@ -1243,7 +1264,6 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     }
   }
 
-  // Ichimoku Force
   const tenkanLen = 9, kijunLen = 26, senkouBLen = 52, forceScale = 100, neutralZone = 8, forceSmoothLen = 5;
   const donch = (len: number, i: number) => (highest(highs, len, i) + lowest(lows, len, i)) / 2;
   const atrBase = atrSeries(candles, kijunLen);
@@ -1261,7 +1281,7 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     const priceCloud = src > cloudTop ? ((src - cloudTop) / normBase) * (forceScale * 0.45)
                      : src < cloudBot ? ((src - cloudBot) / normBase) * (forceScale * 0.45) : 0;
     const cloudStruct = cloudBias * ((cloudSize / normBase) * (forceScale * 0.30));
-    rawForceArr[i] = clamp(rawForceArr[i], -forceScale, forceScale);
+    rawForceArr[i] = clamp(tkSpread + priceCloud + cloudStruct, -forceScale, forceScale);
     if (i === last) {
       tkLast = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
       priceVsCloudLast = src > cloudTop ? 1 : src < cloudBot ? -1 : 0;
@@ -1278,7 +1298,6 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
   const ichiLong = ichiPrev <= 0 && ichiForce > 0;
   const ichiShort = ichiPrev >= 0 && ichiForce < 0;
 
-  // MACD + Divergence
   const fast = ema(closes, 12), slow = ema(closes, 26);
   const macdArr = fast.map((v, i) => (isNaN(v) || isNaN(slow[i]) ? NaN : v - slow[i]));
   const sigArr = ema(macdArr, 9);
@@ -1302,7 +1321,6 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
   const macdBullCross = macdArr[last - 1] <= sigArr[last - 1] && macdArr[last] > sigArr[last];
   const macdBearCross = macdArr[last - 1] >= sigArr[last - 1] && macdArr[last] < sigArr[last];
 
-  // Volume Profile
   const bins = 25, barsBack = Math.min(100, n);
   const slice = candles.slice(-barsBack);
   let minP = Infinity, maxP = -Infinity;
@@ -1338,7 +1356,6 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
   const price = closes[last];
   const priceVsPoc: 'above' | 'below' | 'at' = price > poc ? 'above' : price < poc ? 'below' : 'at';
 
-  // SMC
   const swLen = 5;
   let smcTrend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
   let smcBOS = false;
@@ -1387,6 +1404,7 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     rsi: parseFloat((rsiVal[last] || 50).toFixed(1)),
     rsiRegularBull: rRegBull, rsiRegularBear: rRegBear, rsiHiddenBull: rHidBull, rsiHiddenBear: rHidBear,
     ichiForce: parseFloat(ichiForce.toFixed(1)), ichiState,
+    ichiLong, ichiShort,
     macd: parseFloat((macdArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
     macdSignal: parseFloat((sigArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
     macdHist: parseFloat((histArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
@@ -1399,8 +1417,6 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     smcBOS,
     smcCHoCH,
     smcInOrderBlock,
-    ichiLong,
-    ichiShort,
   };
 }
 
