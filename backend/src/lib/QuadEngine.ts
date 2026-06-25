@@ -149,7 +149,7 @@ function lowest(arr: number[], period: number): number[] {
   });
 }
 
-function rsi(closes: number[], period: number): number[] {
+function rsiSeries(closes: number[], period: number): number[] {
   const gains: number[] = [0];
   const losses: number[] = [0];
   for (let i = 1; i < closes.length; i++) {
@@ -163,6 +163,27 @@ function rsi(closes: number[], period: number): number[] {
     if (isNaN(g) || isNaN(al[i])) return NaN;
     return al[i] === 0 ? 100 : 100 - 100 / (1 + g / al[i]);
   });
+}
+
+function atrSeries(candles: Candle[], period: number): number[] {
+  const out: number[] = [];
+  let prev = NaN;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const pc = i > 0 ? candles[i - 1].close : c.close;
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
+    prev = isNaN(prev) ? tr : (prev * (period - 1) + tr) / period;
+    out.push(prev);
+  }
+  return out;
+}
+
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function rsi(closes: number[], period: number): number[] {
+  return rsiSeries(closes, period);
 }
 
 function waveTrend(hlc3: number[], n1: number, n2: number): number[] {
@@ -217,17 +238,6 @@ function clamp01(v: number): number {
 }
 
 // ─── EXACT jdehorty/MLExtensions normalizations ─────────────────────
-// The previous tanh-based normalizations were NOT what MLExtensions uses,
-// which is why lorePrediction didn't match TradingView.
-//
-// MLExtensions actual semantics:
-//   normalize(src) : path-dependent historic min/max rescale to [0,1]
-//   n_rsi  = rescale(ema(rsi(n1), n2), 0, 100, 0, 1)   (ema(x,1) = x)
-//   n_wt   = normalize(wt1 - wt2)
-//   n_cci  = normalize(ema(cci(n1), n2))
-//   n_adx  = rescale(customWilderADX(n1), 0, 100, 0, 1)
-//            with nz(prev)=0 quirks on the first bar
-
 function normalizeHistoric(src: number[]): number[] {
   let hMin = 1e10;
   let hMax = -1e10;
@@ -243,7 +253,7 @@ function normalizeHistoric(src: number[]): number[] {
 
 function nRsi(closes: number[], p1: number, p2: number = 1): number[] {
   let rsiArr = rsi(closes, p1);
-  if (p2 > 1) rsiArr = ema(rsiArr, p2); // ta.ema(x, 1) == x in Pine
+  if (p2 > 1) rsiArr = ema(rsiArr, p2);
   return rsiArr.map(v => (isNaN(v) ? NaN : v / 100));
 }
 
@@ -257,9 +267,6 @@ function nCci(closes: number[], p1: number, p2: number = 1): number[] {
   return normalizeHistoric(cciArr);
 }
 
-// ml.n_adx — verbatim custom recursive Wilder smoothing
-// (NOT the standard ta.adx; trSmooth := trSmooth - trSmooth/len + tr,
-//  with nz(high[1]/low[1]/close[1]) = 0 on the very first bar)
 function nAdx(highs: number[], lows: number[], closes: number[], len: number): number[] {
   const n = highs.length;
   const dx: number[] = new Array(n).fill(NaN);
@@ -642,7 +649,6 @@ function calcLorentzian(
       continue;
     }
 
-    // ── FRESH ARRAYS EVERY BAR (like Pine Script) ─────────────
     const predictions: number[] = [];
     const distances: number[] = [];
 
@@ -957,8 +963,7 @@ export function runQuadEngine(candles: Candle[], userSettings: EngineSettings = 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UI ADAPTER LAYER — keeps the dashboard components working on top of the
-// exact engine above. Engine output is cached per candles array reference.
+// UI ADAPTER LAYER
 // ═══════════════════════════════════════════════════════════════════════════
 
 const engineCache = new WeakMap<Candle[], QuadBar[]>();
@@ -991,9 +996,9 @@ export interface QuadAnalysis {
   squeezeOn: boolean;
   squeezeFiredBullish: boolean;
 
-  comboBuy: boolean;     // active state: trend bullish + lore bullish (kernel-confirmed)
+  comboBuy: boolean;
   comboSell: boolean;
-  comboFresh: boolean;   // a comboBuy/comboSell EVENT fired within last 3 bars
+  comboFresh: boolean;
 
   confFactor: number;
   entry: number;
@@ -1017,13 +1022,11 @@ export function analyzeQuad(
 
   const fmtDp = last.close < 5 ? 4 : 2;
 
-  // Active combo STATE (what the dashboard shows as "BUY ▲" status)
   const loreSimpleBullish = last.lorePrediction > 0 && last.loreKernelBullish;
   const loreSimpleBearish = last.lorePrediction < 0 && last.loreKernelBearish;
   const stateBuy = last.stTrend === 1 && loreSimpleBullish;
   const stateSell = last.stTrend === -1 && loreSimpleBearish;
 
-  // Fresh EVENT within last 3 bars (matches Pine label firing)
   let comboFresh = false;
   for (let i = Math.max(0, n - 3); i < n; i++) {
     if (bars[i].comboBuy || bars[i].comboSell) { comboFresh = true; break; }
@@ -1033,8 +1036,6 @@ export function analyzeQuad(
   const lorePrev = n > 3 ? bars[n - 4].lorePrediction : 0;
   const loreFlipRecent = Math.sign(last.lorePrediction) !== Math.sign(lorePrev);
 
-  // Trade plan: prefer the LATEST combo event's exact engine-computed levels
-  // (these are what the Pine script draws as ENTRY/SL/TP lines)
   let planEntry = last.close;
   let planSl: number | null = null;
   let planTp1: number | null = null;
@@ -1054,7 +1055,6 @@ export function analyzeQuad(
   const loreConf = Math.abs(last.lorePrediction);
   const confFactor = Math.max(0.8, Math.min(1.5, 1.0 + 0.5 * (loreConf / 10.0)));
 
-  // Fallback plan if no recent event (approximate ATR via stLine gap)
   if (planSl === null) {
     const approxAtr = Math.abs(last.close - last.stLine) / 2 || last.close * 0.01;
     planSl = last.close - 1.5 * approxAtr;
@@ -1064,7 +1064,6 @@ export function analyzeQuad(
     planTp3 = planEntry + risk * 3.0 * confFactor;
   }
 
-  // ATR estimate for display (effAtr ≈ (entry - sl) / 1.5 from event levels)
   const atrDisplay = planSl !== null ? Math.abs(planEntry - planSl) / 1.5 : 0;
 
   return {
@@ -1096,8 +1095,6 @@ export function analyzeQuad(
   };
 }
 
-// ─── Chart series export (indicator drawn on candles) ─────────────
-
 export interface QuadChartSeries {
   candles: Candle[];
   stLine: number[];
@@ -1113,7 +1110,6 @@ export function computeQuadSeries(candles: Candle[]): QuadChartSeries {
   const trend = bars.map(b => b.stTrend);
   const lore = bars.map(b => b.lorePrediction);
 
-  // Markers = the engine's exact comboBuy/comboSell EVENTS
   const markers: { index: number; type: 'buy' | 'sell'; price: number }[] = [];
   bars.forEach((b, i) => {
     if (b.comboBuy) markers.push({ index: i, type: 'buy', price: b.low });
@@ -1122,14 +1118,6 @@ export function computeQuadSeries(candles: Candle[]): QuadChartSeries {
 
   return { candles: bars, stLine, trend, lore, markers };
 }
-
-// ─── Binance kline fetch (PAGINATED) with simulated fallback ───────
-//
-// CRITICAL for Lorentzian matching: the Pine quirk trains on the FIRST
-// `maxBarsBack` (2000) bars of the chart's loaded dataset (loop i=0..1999
-// over arrays pushed since bar 0). TradingView loads ~5000 bars on the
-// Basic plan (10k Plus, 20k Premium). To reproduce the same training pool
-// we must fetch the SAME TOTAL dataset length, not just 1000 recent bars.
 
 export async function fetchKlines(
   symbol: string,
@@ -1160,9 +1148,9 @@ export async function fetchKlines(
         volume: parseFloat(k[5]),
       }));
 
-      all.unshift(...batch); // prepend older batch (keeps chronological order)
+      all.unshift(...batch);
       endTime = batch[0].time - 1;
-      if (raw.length < limit) break; // exchange has no more history
+      if (raw.length < limit) break;
     }
 
     if (all.length < 60) throw new Error('insufficient candles');
@@ -1184,6 +1172,238 @@ export async function fetchKlines(
     return { candles, source: 'simulated' };
   }
 }
+
+// ============================================================================
+// Extra Indicators (RSI Div, Ichimoku, MACD Div, Volume Profile, SMC)
+// ============================================================================
+
+export interface ExtraIndicators {
+  rsi: number;
+  rsiRegularBull: boolean;
+  rsiRegularBear: boolean;
+  rsiHiddenBull: boolean;
+  rsiHiddenBear: boolean;
+  ichiForce: number;
+  ichiState: string;
+  macd: number;
+  macdSignal: number;
+  macdHist: number;
+  macdBullCross: boolean;
+  macdBearCross: boolean;
+  macdBullDiv: boolean;
+  macdBearDiv: boolean;
+  poc: number;
+  vah: number;
+  val: number;
+  priceVsPoc: 'above' | 'below' | 'at';
+  smcTrend: string;
+  smcBOS: boolean;
+  smcCHoCH: boolean;
+  smcInOrderBlock: boolean;
+}
+
+export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
+  const n = candles.length;
+  const last = n - 1;
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+
+  const rsiVal = rsiSeries(closes, 14);
+
+  // RSI Divergence Pro
+  const leftBars = 2, rightBars = 2, minDist = 5, minRsiDiff = 2.0;
+  let lowBar1 = NaN, lowBar2 = NaN, lowP1 = NaN, lowP2 = NaN, lowR1 = NaN, lowR2 = NaN;
+  let hiBar1 = NaN, hiBar2 = NaN, hiP1 = NaN, hiP2 = NaN, hiR1 = NaN, hiR2 = NaN;
+  let rRegBull = false, rRegBear = false, rHidBull = false, rHidBear = false;
+  for (let i = 0; i < n; i++) {
+    const priceLowPiv = pivotLows(lows, leftBars, rightBars, i);
+    const rsiLowPiv = pivotLows(rsiVal, leftBars, rightBars, i);
+    if (priceLowPiv && rsiLowPiv) {
+      const pb = i - rightBars;
+      lowBar2 = lowBar1; lowP2 = lowP1; lowR2 = lowR1;
+      lowBar1 = pb; lowP1 = lows[pb]; lowR1 = rsiVal[pb];
+      if (!isNaN(lowBar2) && lowBar1 - lowBar2 >= minDist && !isNaN(lowP2) && Math.abs(lowR1 - lowR2) >= minRsiDiff) {
+        const fresh = pb >= n - 8;
+        if (lowP1 < lowP2 && lowR1 > lowR2 && fresh) rRegBull = true;
+        if (lowP1 > lowP2 && lowR1 < lowR2 && fresh) rHidBull = true;
+      }
+    }
+    const priceHighPiv = pivotHighs(highs, leftBars, rightBars, i);
+    const rsiHighPiv = pivotHighs(rsiVal, leftBars, rightBars, i);
+    if (priceHighPiv && rsiHighPiv) {
+      const pb = i - rightBars;
+      hiBar2 = hiBar1; hiP2 = hiP1; hiR2 = hiR1;
+      hiBar1 = pb; hiP1 = highs[pb]; hiR1 = rsiVal[pb];
+      if (!isNaN(hiBar2) && hiBar1 - hiBar2 >= minDist && !isNaN(hiP2) && Math.abs(hiR1 - hiR2) >= minRsiDiff) {
+        const fresh = pb >= n - 8;
+        if (hiP1 > hiP2 && hiR1 < hiR2 && fresh) rRegBear = true;
+        if (hiP1 < hiP2 && hiR1 > hiR2 && fresh) rHidBear = true;
+      }
+    }
+  }
+
+  // Ichimoku Force
+  const tenkanLen = 9, kijunLen = 26, senkouBLen = 52, forceScale = 100, neutralZone = 8, forceSmoothLen = 5;
+  const donch = (len: number, i: number) => (highest(highs, len, i) + lowest(lows, len, i)) / 2;
+  const atrBase = atrSeries(candles, kijunLen);
+  const rawForceArr = new Array(n).fill(0);
+  let tkLast = 0, priceVsCloudLast = 0;
+  for (let i = 0; i < n; i++) {
+    const tenkan = donch(tenkanLen, i), kijun = donch(kijunLen, i);
+    const senkouA = (tenkan + kijun) / 2, senkouB = donch(senkouBLen, i);
+    const cloudTop = Math.max(senkouA, senkouB), cloudBot = Math.min(senkouA, senkouB);
+    const cloudSize = Math.abs(senkouA - senkouB);
+    const cloudBias = senkouA > senkouB ? 1 : senkouA < senkouB ? -1 : 0;
+    const normBase = Math.max(atrBase[i] || 0.01, cloudSize, 0.01);
+    const src = closes[i];
+    const tkSpread = ((tenkan - kijun) / normBase) * forceScale;
+    const priceCloud = src > cloudTop ? ((src - cloudTop) / normBase) * (forceScale * 0.45)
+                     : src < cloudBot ? ((src - cloudBot) / normBase) * (forceScale * 0.45) : 0;
+    const cloudStruct = cloudBias * ((cloudSize / normBase) * (forceScale * 0.30));
+    rawForceArr[i] = clamp(rawForceArr[i], -forceScale, forceScale);
+    if (i === last) {
+      tkLast = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
+      priceVsCloudLast = src > cloudTop ? 1 : src < cloudBot ? -1 : 0;
+    }
+  }
+  const forceSmoothed = ema(rawForceArr, forceSmoothLen).map((v) => clamp(v, -100, 100));
+  const ichiForce = forceSmoothed[last] || 0;
+  const ichiPrev = forceSmoothed[last - 1] || 0;
+  const ichiState =
+    ichiForce > neutralZone && priceVsCloudLast >= 0 && tkLast > 0 ? 'Bullish Expansion' :
+    ichiForce > neutralZone && tkLast > 0 ? 'Bullish Pressure' :
+    ichiForce < -neutralZone && priceVsCloudLast <= 0 && tkLast < 0 ? 'Bearish Expansion' :
+    ichiForce < -neutralZone && tkLast < 0 ? 'Bearish Pressure' : 'Neutral';
+  const ichiLong = ichiPrev <= 0 && ichiForce > 0;
+  const ichiShort = ichiPrev >= 0 && ichiForce < 0;
+
+  // MACD + Divergence
+  const fast = ema(closes, 12), slow = ema(closes, 26);
+  const macdArr = fast.map((v, i) => (isNaN(v) || isNaN(slow[i]) ? NaN : v - slow[i]));
+  const sigArr = ema(macdArr, 9);
+  const histArr = macdArr.map((v, i) => (isNaN(v) || isNaN(sigArr[i]) ? NaN : v - sigArr[i]));
+  const lbl = 2, lbr = 2, rMin = 3, rMax = 15;
+  let lastPlBar = -1, lastPlOsc = NaN, lastPlLow = NaN;
+  let lastPhBar = -1, lastPhOsc = NaN, lastPhHigh = NaN;
+  let macdBullDiv = false, macdBearDiv = false;
+  for (let i = 0; i < n; i++) {
+    if (pivLow(macdArr, lbl, lbr, i)) {
+      const p = i - lbr;
+      if (lastPlBar >= 0) { const bars = p - lastPlBar; if (bars >= rMin && bars <= rMax && lows[p] < lastPlLow && macdArr[p] > lastPlOsc && p >= n - 8) macdBullDiv = true; }
+      lastPlBar = p; lastPlOsc = macdArr[p]; lastPlLow = lows[p];
+    }
+    if (pivHigh(macdArr, lbl, lbr, i)) {
+      const p = i - lbr;
+      if (lastPhBar >= 0) { const bars = p - lastPhBar; if (bars >= rMin && bars <= rMax && highs[p] > lastPhHigh && macdArr[p] < lastPhOsc && p >= n - 8) macdBearDiv = true; }
+      lastPhBar = p; lastPhOsc = macdArr[p]; lastPhHigh = highs[p];
+    }
+  }
+  const macdBullCross = macdArr[last - 1] <= sigArr[last - 1] && macdArr[last] > sigArr[last];
+  const macdBearCross = macdArr[last - 1] >= sigArr[last - 1] && macdArr[last] < sigArr[last];
+
+  // Volume Profile
+  const bins = 25, barsBack = Math.min(100, n);
+  const slice = candles.slice(-barsBack);
+  let minP = Infinity, maxP = -Infinity;
+  for (const c of slice) { minP = Math.min(minP, c.low); maxP = Math.max(maxP, c.high); }
+  let poc = 0, vah = 0, val = 0;
+  if (maxP > minP) {
+    const step = (maxP - minP) / bins;
+    const totals = new Array(bins).fill(0);
+    for (const c of slice) {
+      const rng = c.high - c.low;
+      if (rng > 0 && step > 0) {
+        const sB = clamp(Math.floor((c.low - minP) / step), 0, bins - 1);
+        const eB = clamp(Math.floor((c.high - minP) / step), 0, bins - 1);
+        for (let b = sB; b <= eB; b++) {
+          const binLo = minP + b * step, binHi = binLo + step;
+          const overlap = Math.max(Math.min(c.high, binHi) - Math.max(c.low, binLo), 0);
+          if (overlap > 0) totals[b] += c.volume * (overlap / rng);
+        }
+      }
+    }
+    let totalVol = 0, maxVol = 0, pocIdx = 0;
+    for (let b = 0; b < bins; b++) { totalVol += totals[b]; if (totals[b] > maxVol) { maxVol = totals[b]; pocIdx = b; } }
+    const target = totalVol * 0.7;
+    let lo = pocIdx, hi = pocIdx, cum = totals[pocIdx];
+    while (cum < target && (lo > 0 || hi < bins - 1)) {
+      const lv = lo > 0 ? totals[lo - 1] : -1, rv = hi < bins - 1 ? totals[hi + 1] : -1;
+      if (rv >= lv && hi < bins - 1) { hi++; cum += totals[hi]; } else if (lo > 0) { lo--; cum += totals[lo]; } else break;
+    }
+    poc = minP + (pocIdx + 0.5) * step;
+    vah = minP + (hi + 1) * step;
+    val = minP + lo * step;
+  }
+  const price = closes[last];
+  const priceVsPoc: 'above' | 'below' | 'at' = price > poc ? 'above' : price < poc ? 'below' : 'at';
+
+  // SMC
+  const swLen = 5;
+  let smcTrend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+  let smcBOS = false;
+  let smcCHoCH = false;
+  let smcInOrderBlock = false;
+  {
+    const swingHighs: { idx: number; price: number }[] = [];
+    const swingLows: { idx: number; price: number }[] = [];
+    for (let i = swLen; i < n; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = i - swLen; j < i; j++) { hh = Math.max(hh, highs[j]); ll = Math.min(ll, lows[j]); }
+      const curHigh = highs[i - swLen], curLow = lows[i - swLen];
+      if (curHigh > hh) swingHighs.push({ idx: i - swLen, price: curHigh });
+      if (curLow < ll) swingLows.push({ idx: i - swLen, price: curLow });
+    }
+    if (swingHighs.length >= 2 && swingLows.length >= 2) {
+      const sh1 = swingHighs[swingHighs.length - 2], sh2 = swingHighs[swingHighs.length - 1];
+      const sl1 = swingLows[swingLows.length - 2], sl2 = swingLows[swingLows.length - 1];
+      const HH = sh2.price > sh1.price, HL = sl2.price > sl1.price;
+      const LH = sh2.price < sh1.price, LL = sl2.price < sl1.price;
+      if (HH && HL) smcTrend = 'bullish';
+      else if (LH && LL) smcTrend = 'bearish';
+      else smcTrend = 'neutral';
+      const lastSwingHigh = sh2.price, lastSwingLow = sl2.price;
+      const fromIdx = Math.max(sh2.idx, sl2.idx) + 1;
+      for (let i = fromIdx; i < n; i++) {
+        if (smcTrend === 'bullish') {
+          if (closes[i] > lastSwingHigh) { smcBOS = true; break; }
+          if (closes[i] < lastSwingLow) { smcCHoCH = true; break; }
+        } else if (smcTrend === 'bearish') {
+          if (closes[i] < lastSwingLow) { smcBOS = true; break; }
+          if (closes[i] > lastSwingHigh) { smcCHoCH = true; break; }
+        }
+      }
+      const legStart = sl2.idx;
+      for (let i = legStart - 1; i >= Math.max(0, legStart - 6); i--) {
+        if (candles[i].close < candles[i].open) {
+          if (price >= candles[i].low && price <= candles[i].high) smcInOrderBlock = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    rsi: parseFloat((rsiVal[last] || 50).toFixed(1)),
+    rsiRegularBull: rRegBull, rsiRegularBear: rRegBear, rsiHiddenBull: rHidBull, rsiHiddenBear: rHidBear,
+    ichiForce: parseFloat(ichiForce.toFixed(1)), ichiState,
+    macd: parseFloat((macdArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
+    macdSignal: parseFloat((sigArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
+    macdHist: parseFloat((histArr[last] || 0).toFixed(price < 5 ? 5 : 2)),
+    macdBullCross, macdBearCross, macdBullDiv, macdBearDiv,
+    poc: parseFloat(poc.toFixed(price < 5 ? 4 : 2)),
+    vah: parseFloat(vah.toFixed(price < 5 ? 4 : 2)),
+    val: parseFloat(val.toFixed(price < 5 ? 4 : 2)),
+    priceVsPoc,
+    smcTrend,
+    smcBOS,
+    smcCHoCH,
+    smcInOrderBlock,
+    ichiLong,
+    ichiShort,
+  };
+}
+
 // ============================================================================
 // MARKET SNAPSHOT – for JARVIS AI trading decision
 // ============================================================================
@@ -1192,7 +1412,6 @@ export interface MarketSnapshot {
   symbol: string;
   timeframe: string;
   price: number;
-  // QuadEngine
   satsTrend: number;
   lorePrediction: number;
   loreKernelBullish: boolean;
@@ -1200,7 +1419,6 @@ export interface MarketSnapshot {
   sqzFiredBullish: boolean;
   comboBuy: boolean;
   comboSell: boolean;
-  // Extra Indicators
   rsi: number;
   rsiRegularBull: boolean;
   rsiRegularBear: boolean;
@@ -1221,13 +1439,6 @@ export interface MarketSnapshot {
   smcInOrderBlock: boolean;
 }
 
-/**
- * Build a comprehensive snapshot for a given symbol/interval.
- * @param symbol   e.g. 'BTCUSDT'
- * @param timeframe e.g. '1h'
- * @param candles  Price data (from Binance or simulated)
- * @returns Complete snapshot to send to JARVIS.
- */
 export function getMarketSnapshot(
   symbol: string,
   timeframe: string,
