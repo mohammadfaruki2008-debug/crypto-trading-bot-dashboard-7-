@@ -1,6 +1,5 @@
 // ============================================================================
-// QuadEngine.ts – Pine Script v6 "Quad-Engine Trading System" TypeScript port
-// FRESH NEIGHBOUR SELECTION PER BAR – matches Pine Script exactly
+// QuadEngine.ts – Final clean version (no clamp)
 // ============================================================================
 
 export interface Candle {
