@@ -35,7 +35,8 @@ app.use((req, _res, next) => {
 });
 
 // 📁 ১. ফ্রন্টএন্ডের স্ট্যাটিক ফাইলগুলো এক্সপ্রেসের সাথে কানেক্ট করা
-app.use(express.static(path.join(__dirname, '../../dist')));
+// Fix: পরিবর্তন করা হয়েছে '../../dist' → '../dist'
+app.use(express.static(path.join(__dirname, '..', 'dist')));
 
 // 🔌 ২. আপনার এপিআই রাউটগুলো মাউন্ট করা
 app.use('/api', settingsRouter);
@@ -51,8 +52,8 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
-  // বাকি সব ক্ষেত্রে ফ্রন্টএন্ডের সিঙ্গেল ইনডেক্স ফাইলটি ব্রাউজারে পুশ হবে
-  res.sendFile(path.join(__dirname, '../../dist/index.html'));
+  // Fix: পরিবর্তন করা হয়েছে '../../dist' → '../dist'
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
 // ❌ ৫. ৪MD৪ এবং গ্লোবাল এরর হ্যান্ডেলার
