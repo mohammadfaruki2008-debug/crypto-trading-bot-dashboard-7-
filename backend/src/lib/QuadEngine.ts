@@ -177,10 +177,6 @@ function atrSeries(candles: Candle[], period: number): number[] {
   return out;
 }
 
-function clamp(x: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, x));
-}
-
 function rsi(closes: number[], period: number): number[] {
   return rsiSeries(closes, period);
 }
@@ -1281,13 +1277,13 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     const priceCloud = src > cloudTop ? ((src - cloudTop) / normBase) * (forceScale * 0.45)
                      : src < cloudBot ? ((src - cloudBot) / normBase) * (forceScale * 0.45) : 0;
     const cloudStruct = cloudBias * ((cloudSize / normBase) * (forceScale * 0.30));
-    rawForceArr[i] = clamp(tkSpread + priceCloud + cloudStruct, -forceScale, forceScale);
+    rawForceArr[i] = Math.max(-forceScale, Math.min(forceScale, tkSpread + priceCloud + cloudStruct));
     if (i === last) {
       tkLast = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
       priceVsCloudLast = src > cloudTop ? 1 : src < cloudBot ? -1 : 0;
     }
   }
-  const forceSmoothed = ema(rawForceArr, forceSmoothLen).map((v) => clamp(v, -100, 100));
+  const forceSmoothed = ema(rawForceArr, forceSmoothLen).map((v) => Math.max(-100, Math.min(100, v)));
   const ichiForce = forceSmoothed[last] || 0;
   const ichiPrev = forceSmoothed[last - 1] || 0;
   const ichiState =
@@ -1332,8 +1328,8 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
     for (const c of slice) {
       const rng = c.high - c.low;
       if (rng > 0 && step > 0) {
-        const sB = clamp(Math.floor((c.low - minP) / step), 0, bins - 1);
-        const eB = clamp(Math.floor((c.high - minP) / step), 0, bins - 1);
+        const sB = Math.max(0, Math.min(bins - 1, Math.floor((c.low - minP) / step)));
+        const eB = Math.max(0, Math.min(bins - 1, Math.floor((c.high - minP) / step)));
         for (let b = sB; b <= eB; b++) {
           const binLo = minP + b * step, binHi = binLo + step;
           const overlap = Math.max(Math.min(c.high, binHi) - Math.max(c.low, binLo), 0);
