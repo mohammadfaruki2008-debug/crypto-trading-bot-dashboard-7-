@@ -228,10 +228,6 @@ function adx(highs: number[], lows: number[], closes: number[], period: number):
   return rma(dx, period);
 }
 
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
-}
-
 // ─── EXACT jdehorty/MLExtensions normalizations ─────────────────────
 
 function normalizeHistoric(src: number[]): number[] {
@@ -283,7 +279,7 @@ function nAdx(highs: number[], lows: number[], closes: number[], len: number): n
     dx[i] = !isFinite(sum) || sum === 0 ? NaN : (Math.abs(diP - diN) / sum) * 100;
   }
   const adxArr = rma(dx, len);
-  return adxArr.map(v => (isNaN(v) ? NaN : clamp01(v / 100)));
+  return adxArr.map(v => (isNaN(v) ? NaN : Math.max(0, Math.min(1, v / 100))));
 }
 
 function rescale(v: number, iLo: number, iHi: number, oLo: number, oHi: number): number {
