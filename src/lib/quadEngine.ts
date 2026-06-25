@@ -1184,3 +1184,86 @@ export async function fetchKlines(
     return { candles, source: 'simulated' };
   }
 }
+// ============================================================================
+// MARKET SNAPSHOT – for JARVIS AI trading decision
+// ============================================================================
+
+export interface MarketSnapshot {
+  symbol: string;
+  timeframe: string;
+  price: number;
+  // QuadEngine
+  satsTrend: number;
+  lorePrediction: number;
+  loreKernelBullish: boolean;
+  sqzOn: boolean;
+  sqzFiredBullish: boolean;
+  comboBuy: boolean;
+  comboSell: boolean;
+  // Extra Indicators
+  rsi: number;
+  rsiRegularBull: boolean;
+  rsiRegularBear: boolean;
+  rsiHiddenBull: boolean;
+  rsiHiddenBear: boolean;
+  ichiForce: number;
+  ichiState: string;
+  macd: number;
+  macdBullCross: boolean;
+  macdBearCross: boolean;
+  macdBullDiv: boolean;
+  macdBearDiv: boolean;
+  poc: number;
+  priceVsPoc: 'above' | 'below' | 'at';
+  smcTrend: string;
+  smcBOS: boolean;
+  smcCHoCH: boolean;
+  smcInOrderBlock: boolean;
+}
+
+/**
+ * Build a comprehensive snapshot for a given symbol/interval.
+ * @param symbol   e.g. 'BTCUSDT'
+ * @param timeframe e.g. '1h'
+ * @param candles  Price data (from Binance or simulated)
+ * @returns Complete snapshot to send to JARVIS.
+ */
+export function getMarketSnapshot(
+  symbol: string,
+  timeframe: string,
+  candles: Candle[]
+): MarketSnapshot {
+  const analysis = analyzeQuad(symbol, timeframe, candles, 'binance_live');
+  const extra = computeExtraIndicators(candles);
+
+  return {
+    symbol,
+    timeframe,
+    price: analysis.lastPrice,
+    satsTrend: analysis.satsTrend,
+    lorePrediction: analysis.lorePrediction,
+    loreKernelBullish: analysis.loreBullish,
+    sqzOn: analysis.squeezeOn,
+    sqzFiredBullish: analysis.squeezeFiredBullish,
+    comboBuy: analysis.comboBuy,
+    comboSell: analysis.comboSell,
+    rsi: extra.rsi,
+    rsiRegularBull: extra.rsiRegularBull,
+    rsiRegularBear: extra.rsiRegularBear,
+    rsiHiddenBull: extra.rsiHiddenBull,
+    rsiHiddenBear: extra.rsiHiddenBear,
+    ichiForce: extra.ichiForce,
+    ichiState: extra.ichiState,
+    macd: extra.macd,
+    macdBullCross: extra.macdBullCross,
+    macdBearCross: extra.macdBearCross,
+    macdBullDiv: extra.macdBullDiv,
+    macdBearDiv: extra.macdBearDiv,
+    poc: extra.poc,
+    priceVsPoc: extra.priceVsPoc,
+    smcTrend: extra.smcTrend,
+    smcBOS: extra.smcBOS,
+    smcCHoCH: extra.smcCHoCH,
+    smcInOrderBlock: extra.smcInOrderBlock,
+  };
+}
