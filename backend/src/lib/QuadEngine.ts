@@ -1263,7 +1263,7 @@ export function computeExtraIndicators(candles: Candle[]): ExtraIndicators {
   }
 
   const tenkanLen = 9, kijunLen = 26, senkouBLen = 52, forceScale = 100, neutralZone = 8, forceSmoothLen = 5;
-  const donch = (len: number, i: number) => (highest(highs, len, i) + lowest(lows, len, i)) / 2;
+  const donch = (len: number, i: number) => (highest(highs, len)[i] + lowest(lows, len)[i]) / 2;
   const atrBase = atrSeries(candles, kijunLen);
   const rawForceArr = new Array(n).fill(0);
   let tkLast = 0, priceVsCloudLast = 0;
