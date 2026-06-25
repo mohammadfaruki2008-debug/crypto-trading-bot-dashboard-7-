@@ -1,5 +1,5 @@
 // ============================================================================
-// QuadEngine.ts – Final clean version (no clamp)
+// QuadEngine.ts – Final version (NO clamp conflicts)
 // ============================================================================
 
 export interface Candle {
@@ -226,8 +226,6 @@ function adx(highs: number[], lows: number[], closes: number[], period: number):
   });
   return rma(dx, period);
 }
-
-// ─── EXACT jdehorty/MLExtensions normalizations ─────────────────────
 
 function normalizeHistoric(src: number[]): number[] {
   let hMin = 1e10;
